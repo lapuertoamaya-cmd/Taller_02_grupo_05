@@ -1,0 +1,1387 @@
+################################################################################
+# TALLER 2 - PREDICCION DE POBREZA EN HOGARES (GEIH)
+# Big Data y Machine Learning
+
+################################################################################
+
+# 0. LIBRERIAS Y LECTURA DE DATOS ---------------------------------------------
+
+#' Carga de paquetes
+#'
+#' @description Se cargan los paquetes necesarios para todo el script:
+#' manejo de datos (tidyverse), modelos de regularizacion (glmnet), entrenamiento
+#' y validacion cruzada (caret), metricas adicionales (MLmetrics), Naive Bayes
+#' (naivebayes), curvas ROC/PR (pROC) y documentacion de funciones (docstring).
+# 0. LIBRERIAS Y LECTURA DE DATOS ---------------------------------------------
+
+if (!require("pacman")) install.packages("pacman")
+pacman::p_load(glmnet, MLmetrics, naivebayes, pROC, docstring,ranger,# Para bagging y random forest.
+               randomForest, # Para random forest.
+               tidyverse,    # Manipulación de datos.
+               caret,        # Entrenamiento del modelo y selección de hiperparámetros.
+               Metrics,      # Métricas de evaluación de los problemas de clasificación.
+               adabag,       # AdaBoost 
+               gbm,          # Gradient Boosting Models. 
+               lightgbm,     # LightGBM
+               xgboost,      # XGBoost
+               conflicted)
+conflicted::conflicts_prefer(dplyr::filter)
+
+setwd("C:/Users/aeste/OneDrive/Documentos/10 Semestre/Big Data ML/Taller 2")
+
+db_train_hogares  <- read.csv("train_hogares.csv")
+db_train_personas <- read.csv("train_personas.csv")
+db_test_hogares   <- read.csv("test_hogares.csv")
+db_test_personas  <- read.csv("test_personas.csv")
+
+db_train_hogares <- db_train_hogares |>
+  select(-Ingtotug, -Ingtotugarr, -Ingpcug, -Li, -Lp,
+         -Indigente, -Npobres, -Nindigentes, -Fex_c, -Fex_dpto, -Dominio, -Depto)
+
+
+# 1. FUNCIONES DE PREPROCESAMIENTO --------------------------------------------
+
+fun_preprocess_personas <- function(.db) {
+  #' Preprocesar base de datos de personas
+  #'
+  #' @description \code{fun_preprocess_personas()} retorna una base de datos con
+  #' nombres descriptivos, variables binarias y etiquetas en las variables
+  #' categóricas, lista para colapsar a nivel de hogar. La población en edad de
+  #' trabajar se toma de la variable \code{Pet} del DANE.
+  #'
+  #' @param .db \code{tibble}. Base de datos descargada de Kaggle a nivel de
+  #' personas (train o test).
+  #'
+  #' @returns \code{tibble}. Base de datos a nivel de persona. Incluye el id del
+  #' hogar, \code{id}, el id de la persona, \code{id_persona}, la edad,
+  #' \code{num_age}, indicadoras de sexo, jefatura, pertenencia a la PET,
+  #' ocupación, desocupación e inactividad, el nivel educativo,
+  #' \code{cat_educ}, los años de educación, \code{num_educ_anios}, e
+  #' indicadoras de formalidad, subempleo, beneficios laborales, protección
+  #' social y recepción de ingresos no laborales.
+  text_vars <- c('id', 'id_persona' = 'Orden', 'num_age' = 'P6040',
+                 'cat_gender' = 'P6020', 'cat_relationship' = 'P6050',
+                 'bin_pet' = 'Pet', 'bin_employed' = 'Oc',
+                 'bin_desocupado' = 'Des', 'bin_inactivo' = 'Ina',
+                 'cat_educ' = 'P6210', 'num_grado' = 'P6210s1',
+                 'cat_salud_afil' = 'P6090', 'cat_regimen' = 'P6100',
+                 'cat_posicion' = 'P6430', 'bin_cotiza' = 'P6920',
+                 'num_horas' = 'P6800', 'bin_subempleo' = 'P7090',
+                 'bin_pension' = 'P7495', 'bin_ayuda_hogar' = 'P7500s2',
+                 'bin_ayuda_inst' = 'P7500s3', 'bin_remesa' = 'P7505',
+                 'ben_extras' = 'P6510', 'ben_primas' = 'P6545',
+                 'ben_alim' = 'P6580', 'ben_transp' = 'P6585s1',
+                 'ben_familiar' = 'P6585s2', 'ben_subsidio' = 'P6585s3',
+                 'ben_educ' = 'P6585s4')
+  
+  db_result <- .db |>
+    select(all_of(text_vars)) |>
+    mutate(
+      # Sexo, jefatura y estructura por edad
+      bin_male = ifelse(test = cat_gender == 1, yes = 1, no = 0),
+      bin_head = ifelse(test = cat_relationship == 1, yes = 1, no = 0),
+      bin_menor6 = ifelse(test = num_age < 6, yes = 1, no = 0),
+      bin_minor = ifelse(test = num_age < 18, yes = 1, no = 0),
+      bin_old = ifelse(test = num_age > 65, yes = 1, no = 0),
+      
+      # Condición de actividad (NA = no aplica)
+      bin_pet = ifelse(test = is.na(bin_pet), yes = 0, no = 1),
+      bin_occup = ifelse(test = is.na(bin_employed), yes = 0, no = 1),
+      bin_desocupado = ifelse(test = is.na(bin_desocupado), yes = 0, no = 1),
+      bin_inactivo = ifelse(test = is.na(bin_inactivo), yes = 0, no = 1),
+      
+      # Educación: NA y 'no sabe' se imputan como 'Ninguno'
+      cat_educ = case_when(is.na(cat_educ) ~ 1,
+                           cat_educ == 9 ~ 1,
+                           TRUE ~ cat_educ),
+      # Años de educación aproximados: años acumulados por nivel + grado
+      num_educ_anios = case_when(
+        cat_educ == 1 ~ 0,
+        cat_educ == 2 ~ 0,
+        cat_educ == 3 ~ pmin(replace_na(num_grado, 0), 5),
+        cat_educ == 4 ~ 5 + pmin(replace_na(num_grado, 0), 4),
+        cat_educ == 5 ~ 9 + pmin(replace_na(num_grado, 0), 2),
+        cat_educ == 6 ~ 11 + pmin(replace_na(num_grado, 0), 6),
+        TRUE ~ 0),
+      cat_educ = factor(x = cat_educ, levels = 1:6, ordered = TRUE,
+                        labels = c("Ninguno", "Preescolar", "Primaria",
+                                   "Secundaria", "Media", "Universitaria")),
+      bin_superior = ifelse(test = cat_educ == "Universitaria", yes = 1, no = 0),
+      
+      # Calidad del empleo (solo aplica a ocupados)
+      bin_cotiza = ifelse(test = bin_cotiza %in% 1 & bin_occup == 1, yes = 1, no = 0),
+      bin_asalariado = ifelse(test = cat_posicion %in% c(1, 2) & bin_occup == 1,
+                              yes = 1, no = 0),
+      bin_domestico = ifelse(test = cat_posicion %in% 3 & bin_occup == 1,
+                             yes = 1, no = 0),
+      bin_jornalero = ifelse(test = cat_posicion %in% 8 & bin_occup == 1,
+                             yes = 1, no = 0),
+      bin_cuenta_propia = ifelse(test = cat_posicion %in% c(4, 6) & bin_occup == 1,
+                                 yes = 1, no = 0),
+      bin_subempleo = ifelse(test = bin_subempleo %in% 1 & bin_occup == 1,
+                             yes = 1, no = 0),
+      num_horas = ifelse(test = bin_occup == 1, yes = replace_na(num_horas, 0), no = 0),
+      
+      # Índice de beneficios laborales (cada columna vale 1 si recibe)
+      num_beneficios = (ben_extras %in% 1) + (ben_primas %in% 1) + (ben_alim %in% 1) +
+        (ben_transp %in% 1) + (ben_familiar %in% 1) + (ben_subsidio %in% 1) +
+        (ben_educ %in% 1),
+      num_beneficios = ifelse(test = bin_occup == 1, yes = num_beneficios, no = 0),
+      
+      # Protección social
+      bin_subsidiado = ifelse(test = cat_regimen %in% 3, yes = 1, no = 0),
+      bin_sin_salud = ifelse(test = cat_salud_afil %in% 2, yes = 1, no = 0),
+      
+      # Ingresos no laborales (indicadoras)
+      bin_pension = ifelse(test = bin_pension %in% 1, yes = 1, no = 0),
+      bin_ayuda = ifelse(test = bin_ayuda_hogar %in% 1 | bin_ayuda_inst %in% 1 |
+                           bin_remesa %in% 1, yes = 1, no = 0)
+    ) |>
+    select(id, id_persona, num_age, bin_male, bin_head, bin_pet, bin_menor6,
+           bin_minor, bin_old, bin_occup, bin_desocupado, bin_inactivo,
+           cat_educ, num_educ_anios, bin_superior, bin_cotiza, bin_asalariado,
+           bin_domestico, bin_jornalero, bin_cuenta_propia, bin_subempleo,
+           num_horas, num_beneficios, bin_subsidiado, bin_sin_salud,
+           bin_pension, bin_ayuda)
+  
+  return(db_result)
+}
+
+
+fun_colapse_personas <- function(.db) {
+  #' Colapsar a nivel hogar las observaciones de personas
+  #'
+  #' @description \code{fun_colapse_personas()} retorna una base de datos con
+  #' variables a nivel de hogar construidas a partir de las observaciones de
+  #' personas, agrupadas en cinco bloques: ocupación, capital humano,
+  #' demografía y dependencia, calidad del empleo, y protección social. Los
+  #' indicadores de actividad y capital humano se calculan sobre la población en
+  #' edad de trabajar (PET) definida por el DANE.
+  #'
+  #' @param .db \code{tibble}. Base de datos a nivel de personas preprocesada
+  #' por \code{fun_preprocess_personas()}.
+  #'
+  #' @returns \code{tibble}. Una fila por hogar. Incluye el id del hogar,
+  #' \code{id}, y las variables: \code{num_personas}, \code{num_pet},
+  #' \code{prop_ocupados_pet}, \code{bin_sin_ocupados}, \code{num_desocupados},
+  #' \code{prop_inactividad}, \code{cat_maxEduc}, \code{num_educ_max},
+  #' \code{num_educ_prom_pet}, \code{prop_superior}, \code{num_educ_jefe},
+  #' \code{num_minors}, \code{num_menores6}, \code{num_old},
+  #' \code{prop_dependencia}, \code{tasa_dependencia_ocup},
+  #' \code{num_edad_prom_pet}, \code{bin_head_male}, \code{prop_mujeres_ocup},
+  #' \code{prop_cotiza}, \code{prop_asalariados},
+  #' \code{prop_cuenta_propia}, \code{bin_hay_subempleo}, \code{num_horas_prom},
+  #' \code{num_beneficios_prom}, \code{prop_subsidiado}, \code{prop_sin_salud},
+  #' \code{bin_recibe_pension} y \code{bin_recibe_ayuda}.
+  db_result <- .db |>
+    group_by(id) |>
+    summarize(
+      # Tamaño y ocupación
+      num_personas = n(),
+      num_pet = sum(bin_pet, na.rm = TRUE),
+      num_no_pet = sum(1 - bin_pet, na.rm = TRUE),
+      num_ocupados = sum(bin_occup, na.rm = TRUE),
+      num_desocupados = sum(bin_desocupado, na.rm = TRUE),
+      num_inactivos = sum(bin_inactivo, na.rm = TRUE),
+      
+      # Capital humano
+      cat_maxEduc = max(cat_educ, na.rm = TRUE),
+      num_educ_max = max(num_educ_anios, na.rm = TRUE),
+      num_educ_prom_pet = mean(num_educ_anios[bin_pet == 1], na.rm = TRUE),
+      num_superior_pet = sum(bin_superior * bin_pet, na.rm = TRUE),
+      num_educ_jefe = max(num_educ_anios * bin_head, na.rm = TRUE),
+      
+      # Demografía
+      num_minors = sum(bin_minor, na.rm = TRUE),
+      num_menores6 = sum(bin_menor6, na.rm = TRUE),
+      num_old = sum(bin_old, na.rm = TRUE),
+      num_edad_prom_pet = mean(num_age[bin_pet == 1], na.rm = TRUE),
+      
+      # Género y jefatura
+      bin_head_male = max(bin_head * bin_male, na.rm = TRUE),
+      num_mujeres_ocup = sum((1 - bin_male) * bin_occup, na.rm = TRUE),
+      num_jefes = sum(bin_head, na.rm = TRUE),
+      
+      # Calidad del empleo
+      num_cotizan = sum(bin_cotiza, na.rm = TRUE),
+      num_asalariados = sum(bin_asalariado, na.rm = TRUE),
+      num_domesticos = sum(bin_domestico, na.rm = TRUE),
+      num_jornaleros = sum(bin_jornalero, na.rm = TRUE),
+      num_cuenta_propia = sum(bin_cuenta_propia, na.rm = TRUE),
+      bin_hay_subempleo = max(bin_subempleo, na.rm = TRUE),
+      num_horas_total = sum(num_horas, na.rm = TRUE),
+      num_beneficios_total = sum(num_beneficios, na.rm = TRUE),
+      
+      # Protección social
+      prop_subsidiado = mean(bin_subsidiado, na.rm = TRUE),
+      prop_sin_salud = mean(bin_sin_salud, na.rm = TRUE),
+      bin_recibe_pension = max(bin_pension, na.rm = TRUE),
+      bin_recibe_ayuda = max(bin_ayuda, na.rm = TRUE)
+    ) |>
+    mutate(
+      # Ocupación (tasa de ocupación de la PET, como la publica el DANE)
+      prop_ocupados_pet = replace_na(num_ocupados / na_if(num_pet, 0), 0),
+      bin_sin_ocupados = as.integer(num_ocupados == 0),
+      prop_inactividad = replace_na(num_inactivos / na_if(num_pet, 0), 0),
+      prop_subsidiado = replace_na(prop_subsidiado, 0),
+      prop_sin_salud = replace_na(prop_sin_salud, 0),
+      
+      # Capital humano
+      prop_superior = replace_na(num_superior_pet / na_if(num_pet, 0), 0),
+      num_educ_prom_pet = replace_na(num_educ_prom_pet, 0),
+      num_edad_prom_pet = replace_na(num_edad_prom_pet, 0),
+      
+      # Dependencia: personas fuera de la PET por cada persona en la PET,
+      # y personas del hogar por cada ocupado
+      prop_dependencia = coalesce(num_no_pet / na_if(num_pet, 0), num_no_pet),
+      tasa_dependencia_ocup = num_personas / pmax(num_ocupados, 1),
+      
+      # Género
+      prop_mujeres_ocup = replace_na(num_mujeres_ocup / na_if(num_ocupados, 0), 0),
+      
+      # Calidad del empleo (proporciones sobre ocupados; 0 si no hay ocupados)
+      prop_cotiza = replace_na(num_cotizan / na_if(num_ocupados, 0), 0),
+      prop_asalariados = replace_na(num_asalariados / na_if(num_ocupados, 0), 0),
+      prop_domestico = replace_na(num_domesticos / na_if(num_ocupados, 0), 0),
+      prop_jornalero = replace_na(num_jornaleros / na_if(num_ocupados, 0), 0),
+      prop_cuenta_propia = replace_na(num_cuenta_propia / na_if(num_ocupados, 0), 0),
+      num_horas_prom = replace_na(num_horas_total / na_if(num_ocupados, 0), 0),
+      num_beneficios_prom = replace_na(num_beneficios_total / na_if(num_ocupados, 0), 0)
+    ) |>
+    select(id, num_personas, num_pet, prop_ocupados_pet, bin_sin_ocupados,
+           num_desocupados, prop_inactividad, cat_maxEduc, num_educ_max,
+           num_educ_prom_pet, prop_superior, num_educ_jefe, num_minors,
+           num_menores6, num_old, prop_dependencia, tasa_dependencia_ocup,
+           num_edad_prom_pet, bin_head_male, prop_mujeres_ocup,
+           prop_cotiza, prop_asalariados,
+           prop_cuenta_propia, bin_hay_subempleo, num_horas_prom,
+           num_beneficios_prom, prop_subsidiado, prop_sin_salud,
+           bin_recibe_pension, bin_recibe_ayuda, prop_domestico, prop_jornalero) |>
+    ungroup()
+  
+  return(db_result)
+}
+
+
+fun_preprocess_hogares <- function(.db) {
+  #' Preprocesar variables de vivienda a nivel hogar
+  #'
+  #' @description \code{fun_preprocess_hogares()} convierte los NA estructurales
+  #' de las variables de vivienda en indicadoras de tenencia e imputa con cero
+  #' el monto cuando no aplica.
+  #'
+  #' @param .db \code{tibble}. Base de hogares (train o test) con las variables
+  #' \code{P5100}, \code{P5130} y \code{P5140}.
+  #'
+  #' @returns \code{tibble}. Base con las indicadoras
+  #' \code{bin_arriendo_imput} y \code{bin_paga_cuota}, y los montos sin NA.
+  db_result <- .db |>
+    mutate(bin_arriendo_imput = as.integer(!is.na(P5130)),
+           bin_paga_cuota     = as.integer(!is.na(P5100)),
+           # P5130 y P5140 son mutuamente excluyentes (cada hogar responde
+           # solo una, según su tenencia), por lo que coalesce() nunca suma
+           # dos valores reales a la vez.
+           num_arriendo = coalesce(P5140, P5130, 0),
+           num_log_arriendo = log1p(num_arriendo),
+           P5100 = replace_na(P5100, 0)) |>
+    rename(num_amortizacion = P5100) |>
+    mutate(num_log_amortizacion = log1p(num_amortizacion)) |>
+    select(-P5130, -P5140, -num_amortizacion, -num_arriendo)
+  
+  return(db_result)
+}
+
+
+fun_preprocess_privaciones <- function(.db_hogares, .db_personas_ok) {
+  #' Construir proxies de privaciones del IPM como predictores
+  #'
+  #' @description \code{fun_preprocess_privaciones()} construye cinco
+  #' indicadoras de privación inspiradas en la metodología del IPM del DANE
+  #' (DANE, 2014), para usarlas como predictores adicionales de pobreza
+  #' monetaria, no como un índice oficial. Cubre hacinamiento crítico, bajo
+  #' logro educativo, rezago escolar, trabajo infantil y empleo informal.
+  #' No se construyen los diez indicadores restantes del IPM oficial
+  #' (material de pisos y paredes, acceso a agua y saneamiento,
+  #' analfabetismo, inasistencia escolar, cuidado de primera infancia,
+  #' desempleo de larga duración y barreras de acceso a salud) por no
+  #' contar con esas variables en esta base.
+  #'
+  #' @param .db_hogares \code{tibble}. Base de hogares con \code{id},
+  #' \code{Nper}, \code{P5010} y \code{Clase}.
+  #' @param .db_personas_ok \code{tibble}. Base de personas preprocesada por
+  #' \code{fun_preprocess_personas()}, con \code{id}, \code{num_age},
+  #' \code{num_educ_anios}, \code{bin_occup} y \code{bin_cotiza}.
+  #'
+  #' @returns \code{tibble}. Una fila por hogar con las indicadoras
+  #' \code{bin_hacinamiento}, \code{bin_bajo_logro_educ},
+  #' \code{bin_rezago_escolar}, \code{bin_trabajo_infantil},
+  #' \code{bin_empleo_informal_ipm}.
+  
+  # --- Hacinamiento (DANE, 2014): >= 3 personas por cuarto urbano,
+  # > 3 rural.
+  hacinamiento <- .db_hogares |>
+    mutate(
+      num_pers_cuarto = Nper / P5010,
+      bin_hacinamiento = case_when(
+        Clase == 1 & num_pers_cuarto >= 3 ~ 1,
+        Clase == 2 & num_pers_cuarto > 3  ~ 1,
+        TRUE ~ 0
+      )
+    ) |>
+    select(id, bin_hacinamiento)
+  
+  # --- Bajo logro educativo (DANE, 2014): promedio de años de educación
+  # de mayores de 15 años menor a 9. Hogares sin mayores de 15 se privan.
+  logro_educ <- .db_personas_ok |>
+    group_by(id) |>
+    summarize(
+      n_mayores15 = sum(num_age >= 15, na.rm = TRUE),
+      prom_educ_mayores15 = mean(num_educ_anios[num_age >= 15], na.rm = TRUE)
+    ) |>
+    mutate(
+      bin_bajo_logro_educ = case_when(
+        n_mayores15 == 0 ~ 1,
+        prom_educ_mayores15 < 9 ~ 1,
+        TRUE ~ 0
+      )
+    ) |>
+    select(id, bin_bajo_logro_educ)
+  
+  # --- Rezago escolar (DANE, 2014): niños de 7 a 17 años con años de
+  # educación por debajo de la norma (edad - 6), aproximando la regla
+  # exacta del DANE.
+  rezago <- .db_personas_ok |>
+    mutate(
+      bin_en_rezago = as.integer(
+        between(num_age, 7, 17) & num_educ_anios < (num_age - 6)
+      )
+    ) |>
+    group_by(id) |>
+    summarize(
+      n_7_17 = sum(between(num_age, 7, 17), na.rm = TRUE),
+      n_rezago = sum(bin_en_rezago, na.rm = TRUE)
+    ) |>
+    mutate(bin_rezago_escolar = as.integer(n_7_17 > 0 & n_rezago > 0)) |>
+    select(id, bin_rezago_escolar)
+  
+  # --- Trabajo infantil (DANE, 2014): al menos un ocupado entre 12 y
+  # 17 años.
+  trabajo_infantil <- .db_personas_ok |>
+    mutate(bin_nino_ocupado = as.integer(between(num_age, 12, 17) & bin_occup == 1)) |>
+    group_by(id) |>
+    summarize(bin_trabajo_infantil = max(bin_nino_ocupado, na.rm = TRUE)) |>
+    select(id, bin_trabajo_infantil)
+  
+  # --- Unión y conteo de privaciones
+  db_result <- hacinamiento |>
+    left_join(logro_educ, by = "id") |>
+    left_join(rezago, by = "id") |>
+    left_join(trabajo_infantil, by = "id")
+  
+  return(db_result)
+}
+
+
+# 2. CONSTRUCCION DE LAS BASES FINALES ----------------------------------------
+
+db_train_personas <- fun_preprocess_personas(db_train_personas)
+db_test_personas  <- fun_preprocess_personas(db_test_personas)
+
+db_train_personas_nivel_hogar <- fun_colapse_personas(db_train_personas)
+db_test_personas_nivel_hogar  <- fun_colapse_personas(db_test_personas)
+
+db_train_privaciones <- fun_preprocess_privaciones(db_train_hogares, db_train_personas)
+db_test_privaciones  <- fun_preprocess_privaciones(db_test_hogares, db_test_personas)
+
+db_train <- db_train_hogares |>
+  left_join(db_train_personas_nivel_hogar, by = 'id') |>
+  left_join(db_train_privaciones, by = 'id') |>
+  fun_preprocess_hogares() |>
+  select(-id)
+
+db_test <- db_test_hogares |>
+  left_join(db_test_personas_nivel_hogar, by = 'id') |>
+  left_join(db_test_privaciones, by = 'id') |>
+  fun_preprocess_hogares()
+
+# 1. Preparar la base: caret exige que los niveles de la respuesta sean
+#    nombres válidos de R (no 0 y 1)
+db_train <- db_train |>
+  mutate(Pobre = factor(Pobre, levels = c(0, 1), labels = c("No", "Si")))
+
+# Eliminamos variables repetidas
+db_train <- db_train |>
+  select(-Nper, -Npersug, -P5000, -P5010, -P5090)
+
+# Verificación: no deben quedar NA
+sum(is.na(db_train))
+sum(is.na(db_test))
+
+
+# 3. FUNCION AUXILIAR DE METRICAS (usada por todos los modelos) --------------
+
+calcular_metricas <- function(model, umbral, strategy) {
+  #' Calcular precision, recall y F1 para un modelo glmnet con un umbral dado
+  #'
+  #' @description Filtra las predicciones out-of-fold (\code{model$pred})
+  #' correspondientes a la mejor combinación de hiperparámetros
+  #' (\code{model$bestTune}), aplica el umbral de clasificación indicado y
+  #' calcula la matriz de confusión con sus métricas de precision, recall y
+  #' F1, evitando el problema de precisión flotante de \code{inner_join()}.
+  #'
+  #' @param model Objeto \code{train} de caret (method = "glmnet").
+  #' @param umbral \code{numeric}. Umbral de clasificación sobre la
+  #' probabilidad de la clase "Si".
+  #' @param strategy \code{character}. Nombre descriptivo de la estrategia,
+  #' para identificar la fila en la tabla final.
+  #'
+  #' @returns \code{tibble} de una fila con alpha, lambda, threshold,
+  #' precision, recall y F1.
+  pred_model <- model$pred |>
+    filter(alpha == model$bestTune$alpha,
+           lambda == model$bestTune$lambda) |>
+    mutate(pred_clase = factor(ifelse(Si >= umbral, "Si", "No"),
+                               levels = levels(obs)))
+  
+  cm <- confusionMatrix(
+    data = pred_model$pred_clase,
+    reference = pred_model$obs,
+    positive = "Si",
+    mode = "prec_recall"
+  )
+  
+  tibble(
+    strategy = strategy,
+    alpha = model$bestTune$alpha,
+    lambda = model$bestTune$lambda,
+    threshold = umbral,
+    precision = unname(cm$byClass["Precision"]),
+    recall = unname(cm$byClass["Recall"]),
+    F1 = unname(cm$byClass["F1"])
+  )
+}
+
+
+# 4. FOLDS Y CONTROLES COMUNES -------------------------------------------------
+
+set.seed(2026)
+folds <- createFolds(db_train$Pobre, k = 5, returnTrain = TRUE)
+
+# Control con métrica ROC (umbral-independiente): usado para seleccionar
+# hiperparámetros de forma robusta.
+ctrl_roc <- trainControl(
+  method = "cv",
+  number = 5,
+  index = folds,
+  classProbs = TRUE,
+  summaryFunction = twoClassSummary,
+  savePredictions = "final"
+)
+
+# Control con métrica F1 (prSummary, umbral fijo de 0.5 internamente): usado
+# para seleccionar hiperparámetros maximizando F1 directamente.
+ctrl_f1 <- trainControl(
+  method = "cv",
+  number = 5,
+  index = folds,
+  classProbs = TRUE,
+  summaryFunction = prSummary,
+  savePredictions = "final"
+)
+
+# Función de resumen combinada: Accuracy (defaultSummary) + F1 (prSummary)
+multiStats <- function(data, lev = NULL, model = NULL) {
+  c(defaultSummary(data, lev, model),
+    prSummary(data, lev, model))
+}
+
+ctrl_accuracy <- trainControl(
+  method = "cv",
+  number = 5,
+  index = folds,
+  classProbs = TRUE,
+  summaryFunction = multiStats,
+  savePredictions = "final"
+)
+
+# Control con oversampling. Se usa ROC como métrica de selección
+ctrl_up <- trainControl(
+  method = "cv",
+  number = 5,
+  index = folds,
+  classProbs = TRUE,
+  summaryFunction = twoClassSummary,
+  sampling = "up",
+  savePredictions = "final"
+)
+
+# Grilla de hiperparámetros para elastic net (común a todos los modelos glmnet)
+tune_grid <- expand.grid(
+  alpha = seq(0, 1, by = 0.05),
+  lambda = 10^seq(log10(100), log10(0.001), length.out = 20)
+)
+
+
+# MODELO 1: LOGIT ELASTIC NET - SELECCION POR ROC, UMBRAL FIJO 0.5 -------------
+logit_roc <- train(
+  Pobre ~ .,
+  data = db_train,
+  metric = "ROC",
+  maximize = TRUE,
+  trControl = ctrl_roc,
+  tuneGrid = tune_grid,
+  method = "glmnet",
+  family = "binomial",
+  standardize = TRUE
+)
+
+logit_roc
+logit_roc$bestTune
+
+pred_cv_logit_roc <- logit_roc$pred |>
+  filter(alpha == logit_roc$bestTune$alpha,
+         lambda == logit_roc$bestTune$lambda)
+
+coefs_logit_roc <- coef(logit_roc$finalModel, s = logit_roc$bestTune$lambda)
+coefs_df_logit_roc <- data.frame(
+  variable = rownames(coefs_logit_roc),
+  coeficiente = as.numeric(coefs_logit_roc)
+) |> filter(coeficiente != 0) |> arrange(desc(abs(coeficiente)))
+coefs_df_logit_roc
+
+cm_logit_roc <- calcular_metricas(logit_roc, umbral = 0.5,
+                                  strategy = "Logit EN - ROC - umbral 0.5")
+cm_logit_roc
+
+prob_logit_roc <- predict(logit_roc, newdata = db_test, type = "prob")[["Si"]]
+
+predictSample_logit_roc <- db_test |>
+  mutate(pobre_prob = prob_logit_roc,
+         pobre_lab = ifelse(pobre_prob >= 0.5, "Si", "No"),
+         pobre = if_else(pobre_lab == "Si", 1L, 0L)) |>
+  select(id, pobre)
+
+lambda_str_logit_roc <- round(logit_roc$bestTune$lambda, 4)
+alpha_str_logit_roc  <- round(logit_roc$bestTune$alpha, 2)
+name_logit_roc <- paste0("EN_lambda_", lambda_str_logit_roc,
+                         "_alpha_", alpha_str_logit_roc, ".csv")
+
+write.csv(predictSample_logit_roc, name_logit_roc, row.names = FALSE)
+
+
+
+# MODELO 2: LOGIT ELASTIC NET - SELECCION POR F1, UMBRAL OPTIMO EN CURVA PR-----
+
+# --- 2a. Versión con selección por Accuracy (para comparar) ---
+logit_accuracy <- train(
+  Pobre ~ .,
+  data = db_train,
+  metric = "Accuracy",
+  maximize = TRUE,
+  trControl = ctrl_accuracy,
+  tuneGrid = tune_grid,
+  method = "glmnet",
+  family = "binomial",
+  standardize = TRUE
+)
+
+logit_accuracy$bestTune
+
+# --- 2b. Versión con selección por F1 (prSummary) ---
+logit_f1 <- train(
+  Pobre ~ .,
+  data = db_train,
+  metric = "F",
+  maximize = TRUE,
+  trControl = ctrl_f1,
+  tuneGrid = tune_grid,
+  method = "glmnet",
+  family = "binomial",
+  standardize = TRUE
+)
+
+logit_f1$bestTune
+
+y_obs_logitf1  <- logit_f1$pred$obs[logit_f1$pred$lambda == logit_f1$bestTune$lambda &
+                                      logit_f1$pred$alpha == logit_f1$bestTune$alpha]
+p_pred_logitf1 <- logit_f1$pred$Si[logit_f1$pred$lambda == logit_f1$bestTune$lambda &
+                                     logit_f1$pred$alpha == logit_f1$bestTune$alpha]
+
+roc_logitf1 <- pROC::roc(
+  response  = y_obs_logitf1,
+  predictor = p_pred_logitf1,
+  levels = c("No", "Si"),
+  direction = "<"
+)
+
+pr_cutoffs_logitf1 <- data.frame(pROC::coords(
+  roc = roc_logitf1,
+  x = seq(0, 1, length = 100),
+  ret = c('threshold', 'precision', 'recall')
+)) |>
+  mutate(F1 = (2 * precision * recall) / (precision + recall))
+
+best_cutoff_logitf1 <- pr_cutoffs_logitf1 |> slice_max(F1, n = 1)
+best_cutoff_logitf1
+
+cm_logitf1_base <- calcular_metricas(logit_f1, umbral = 0.5,
+                                     strategy = "Logit EN - F1 - umbral 0.5")
+cm_logitf1_pr   <- calcular_metricas(logit_f1, umbral = best_cutoff_logitf1$threshold,
+                                     strategy = "Logit EN - F1 - umbral óptimo PR")
+
+model_comparison_logit <- bind_rows(cm_logit_roc, cm_logitf1_base, cm_logitf1_pr) |>
+  arrange(desc(F1))
+model_comparison_logit
+
+umbral_logitf1 <- best_cutoff_logitf1$threshold
+
+predictSample_logitf1 <- db_test |>
+  mutate(pobre_prob = predict(logit_f1, newdata = db_test, type = "prob")[["Si"]],
+         pobre_lab = ifelse(pobre_prob >= umbral_logitf1, "Si", "No"),
+         pobre = if_else(pobre_lab == "Si", 1L, 0L)) |>
+  select(id, pobre)
+
+lambda_str_logitf1 <- round(logit_f1$bestTune$lambda, 4)
+alpha_str_logitf1  <- round(logit_f1$bestTune$alpha, 2)
+prob_str_logitf1   <- round(umbral_logitf1, 3)
+name_logitf1 <- paste0("EN_lambda_", lambda_str_logitf1,
+                       "_alpha_", alpha_str_logitf1,
+                       "_prob_", prob_str_logitf1, ".csv")
+
+write.csv(predictSample_logitf1, name_logitf1, row.names = FALSE)
+
+
+################################################################################
+# MODELO 3: LDA - SELECCION POR ROC, UMBRAL FIJO 0.5
+################################################################################
+
+lda_roc <- train(
+  Pobre ~ .,
+  data = db_train,
+  method = "lda",
+  metric = "ROC",
+  trControl = ctrl_roc,
+  preProcess = c("center", "scale")
+)
+
+lda_roc
+
+pred_cv_lda_roc <- lda_roc$pred
+
+cm_lda_roc <- confusionMatrix(
+  data = factor(ifelse(pred_cv_lda_roc$Si >= 0.5, "Si", "No"),
+                levels = levels(pred_cv_lda_roc$obs)),
+  reference = pred_cv_lda_roc$obs,
+  positive = "Si",
+  mode = "prec_recall"
+)
+cm_lda_roc
+
+predictSample_lda_roc <- db_test |>
+  mutate(pobre_prob = predict(lda_roc, newdata = db_test, type = "prob")[["Si"]],
+         pobre_lab = ifelse(pobre_prob >= 0.5, "Si", "No"),
+         pobre = if_else(pobre_lab == "Si", 1L, 0L)) |>
+  select(id, pobre)
+
+write.csv(predictSample_lda_roc, "LDA.csv", row.names = FALSE)
+
+
+################################################################################
+# MODELO 4: LDA - SELECCION POR F1, UMBRAL OPTIMO EN CURVA PR
+################################################################################
+
+lda_f1 <- train(
+  Pobre ~ .,
+  data = db_train,
+  method = "lda",
+  metric = "F",
+  trControl = ctrl_f1,
+  preProcess = c("center", "scale")
+)
+
+lda_f1
+
+pred_cv_lda_f1 <- lda_f1$pred
+
+roc_ldaf1 <- pROC::roc(
+  response  = pred_cv_lda_f1$obs,
+  predictor = pred_cv_lda_f1$Si,
+  levels = c("No", "Si"),
+  direction = "<"
+)
+
+pr_cutoffs_ldaf1 <- data.frame(pROC::coords(
+  roc = roc_ldaf1,
+  x = seq(0, 1, length = 100),
+  ret = c('threshold', 'precision', 'recall')
+)) |>
+  mutate(F1 = (2 * precision * recall) / (precision + recall))
+
+best_cutoff_ldaf1 <- pr_cutoffs_ldaf1 |> slice_max(F1, n = 1)
+best_cutoff_ldaf1
+
+pred_cv_lda_f1 <- pred_cv_lda_f1 |>
+  mutate(pred_clase = factor(ifelse(Si >= best_cutoff_ldaf1$threshold, "Si", "No"),
+                             levels = levels(obs)))
+
+cm_ldaf1_base <- confusionMatrix(
+  data = factor(ifelse(pred_cv_lda_f1$Si >= 0.5, "Si", "No"), levels = levels(pred_cv_lda_f1$obs)),
+  reference = pred_cv_lda_f1$obs, positive = "Si", mode = "prec_recall"
+)
+
+cm_ldaf1_pr <- confusionMatrix(
+  data = pred_cv_lda_f1$pred_clase,
+  reference = pred_cv_lda_f1$obs,
+  positive = "Si",
+  mode = "prec_recall"
+)
+cm_ldaf1_pr
+
+umbral_ldaf1 <- best_cutoff_ldaf1$threshold
+
+predictSample_ldaf1 <- db_test |>
+  mutate(pobre_prob = predict(lda_f1, newdata = db_test, type = "prob")[["Si"]],
+         pobre_lab = ifelse(pobre_prob >= umbral_ldaf1, "Si", "No"),
+         pobre = if_else(pobre_lab == "Si", 1L, 0L)) |>
+  select(id, pobre)
+
+name_ldaf1 <- paste0("LDA_F1_prob_", round(umbral_ldaf1, 3), ".csv")
+write.csv(predictSample_ldaf1, name_ldaf1, row.names = FALSE)
+
+
+################################################################################
+# MODELO 5: QDA - SELECCION POR ROC, UMBRAL FIJO 0.5
+################################################################################
+
+qda_roc <- train(
+  Pobre ~ .,
+  data = db_train,
+  method = "qda",
+  metric = "ROC",
+  trControl = ctrl_roc,
+  preProcess = c("center", "scale")
+)
+
+qda_roc
+
+pred_cv_qda_roc <- qda_roc$pred
+
+cm_qda_roc <- confusionMatrix(
+  data = factor(ifelse(pred_cv_qda_roc$Si >= 0.5, "Si", "No"),
+                levels = levels(pred_cv_qda_roc$obs)),
+  reference = pred_cv_qda_roc$obs,
+  positive = "Si",
+  mode = "prec_recall"
+)
+cm_qda_roc
+
+predictSample_qda_roc <- db_test |>
+  mutate(pobre_prob = predict(qda_roc, newdata = db_test, type = "prob")[["Si"]],
+         pobre_lab = ifelse(pobre_prob >= 0.5, "Si", "No"),
+         pobre = if_else(pobre_lab == "Si", 1L, 0L)) |>
+  select(id, pobre)
+
+write.csv(predictSample_qda_roc, "QDA.csv", row.names = FALSE)
+
+
+################################################################################
+# MODELO 6: QDA - SELECCION POR F1, UMBRAL OPTIMO EN CURVA PR
+################################################################################
+
+qda_f1 <- train(
+  Pobre ~ .,
+  data = db_train,
+  method = "qda",
+  metric = "F",
+  trControl = ctrl_f1,
+  preProcess = c("center", "scale")
+)
+
+qda_f1
+
+pred_cv_qda_f1 <- qda_f1$pred
+
+roc_qdaf1 <- pROC::roc(
+  response  = pred_cv_qda_f1$obs,
+  predictor = pred_cv_qda_f1$Si,
+  levels = c("No", "Si"),
+  direction = "<"
+)
+
+pr_cutoffs_qdaf1 <- data.frame(pROC::coords(
+  roc = roc_qdaf1,
+  x = seq(0, 1, length = 100),
+  ret = c('threshold', 'precision', 'recall')
+)) |>
+  mutate(F1 = (2 * precision * recall) / (precision + recall))
+
+best_cutoff_qdaf1 <- pr_cutoffs_qdaf1 |> slice_max(F1, n = 1)
+best_cutoff_qdaf1
+
+pred_cv_qda_f1 <- pred_cv_qda_f1 |>
+  mutate(pred_clase = factor(ifelse(Si >= best_cutoff_qdaf1$threshold, "Si", "No"),
+                             levels = levels(obs)))
+
+cm_qdaf1_base <- confusionMatrix(
+  data = factor(ifelse(pred_cv_qda_f1$Si >= 0.5, "Si", "No"), levels = levels(pred_cv_qda_f1$obs)),
+  reference = pred_cv_qda_f1$obs, positive = "Si", mode = "prec_recall"
+)
+
+cm_qdaf1_pr <- confusionMatrix(
+  data = pred_cv_qda_f1$pred_clase,
+  reference = pred_cv_qda_f1$obs,
+  positive = "Si",
+  mode = "prec_recall"
+)
+cm_qdaf1_pr
+
+umbral_qdaf1 <- best_cutoff_qdaf1$threshold
+
+predictSample_qdaf1 <- db_test |>
+  mutate(pobre_prob = predict(qda_f1, newdata = db_test, type = "prob")[["Si"]],
+         pobre_lab = ifelse(pobre_prob >= umbral_qdaf1, "Si", "No"),
+         pobre = if_else(pobre_lab == "Si", 1L, 0L)) |>
+  select(id, pobre)
+
+name_qdaf1 <- paste0("QDA_F1_prob_", round(umbral_qdaf1, 3), ".csv")
+write.csv(predictSample_qdaf1, name_qdaf1, row.names = FALSE)
+
+
+################################################################################
+# MODELO 7: NAIVE BAYES - SELECCION POR ROC, UMBRAL FIJO 0.5
+################################################################################
+
+tune_grid_nb <- expand.grid(
+  laplace = 0,
+  usekernel = c(TRUE, FALSE),
+  adjust = 1
+)
+
+nb_roc <- train(
+  Pobre ~ .,
+  data = db_train,
+  method = "naive_bayes",
+  metric = "ROC",
+  trControl = ctrl_roc,
+  tuneGrid = tune_grid_nb
+)
+
+nb_roc
+nb_roc$bestTune
+
+pred_cv_nb_roc <- nb_roc$pred |>
+  filter(usekernel == nb_roc$bestTune$usekernel,
+         laplace == nb_roc$bestTune$laplace,
+         adjust == nb_roc$bestTune$adjust)
+
+cm_nb_roc <- confusionMatrix(
+  data = factor(ifelse(pred_cv_nb_roc$Si >= 0.5, "Si", "No"),
+                levels = levels(pred_cv_nb_roc$obs)),
+  reference = pred_cv_nb_roc$obs,
+  positive = "Si",
+  mode = "prec_recall"
+)
+cm_nb_roc
+
+predictSample_nb_roc <- db_test |>
+  mutate(pobre_prob = predict(nb_roc, newdata = db_test, type = "prob")[["Si"]],
+         pobre_lab = ifelse(pobre_prob >= 0.5, "Si", "No"),
+         pobre = if_else(pobre_lab == "Si", 1L, 0L)) |>
+  select(id, pobre)
+
+write.csv(predictSample_nb_roc, "NaiveBayes.csv", row.names = FALSE)
+
+
+################################################################################
+# MODELO 8: LOGIT ELASTIC NET CON OVERSAMPLING - UMBRAL FIJO 0.5
+################################################################################
+
+logit_up05 <- train(
+  Pobre ~ .,
+  data = db_train,
+  metric = "ROC",
+  maximize = TRUE,
+  trControl = ctrl_up,
+  tuneGrid = tune_grid,
+  method = "glmnet",
+  family = "binomial",
+  standardize = TRUE
+)
+
+logit_up05
+logit_up05$bestTune
+
+cm_logitup05 <- calcular_metricas(logit_up05, umbral = 0.5,
+                                  strategy = "Logit EN - Oversampling - umbral 0.5")
+cm_logitup05
+
+predictSample_logitup05 <- db_test |>
+  mutate(pobre_prob = predict(logit_up05, newdata = db_test, type = "prob")[["Si"]],
+         pobre_lab = ifelse(pobre_prob >= 0.5, "Si", "No"),
+         pobre = if_else(pobre_lab == "Si", 1L, 0L)) |>
+  select(id, pobre)
+
+lambda_str_logitup05 <- round(logit_up05$bestTune$lambda, 4)
+alpha_str_logitup05  <- round(logit_up05$bestTune$alpha, 2)
+name_logitup05 <- paste0("EN_up_lambda_", lambda_str_logitup05,
+                         "_alpha_", alpha_str_logitup05, ".csv")
+
+write.csv(predictSample_logitup05, name_logitup05, row.names = FALSE)
+
+
+################################################################################
+# MODELO 9: LOGIT ELASTIC NET CON OVERSAMPLING - UMBRAL OPTIMO EN CURVA PR
+################################################################################
+
+# NOTA IMPORTANTE: la selección de alpha/lambda se hace por ROC (no por F
+# directo con prSummary), porque con oversampling + umbral fijo de 0.5 el
+# cálculo de F puede colapsar y seleccionar un modelo degenerado (ver
+# diagnóstico: AUC = 0, probabilidades predichas constantes en 0.5). Por eso
+# se reutiliza el mismo modelo logit_up05 (seleccionado por ROC con
+# oversampling) y SOLO se calibra el umbral de clasificación maximizando F1
+# en la curva precision-recall. Esto preserva F1 como métrica final reportada
+# sin sufrir la inestabilidad de prSummary durante la búsqueda de
+# hiperparámetros.
+
+pred_cv_logitup <- logit_up05$pred |>
+  filter(alpha == logit_up05$bestTune$alpha,
+         lambda == logit_up05$bestTune$lambda)
+
+roc_logitupf1 <- pROC::roc(
+  response  = pred_cv_logitup$obs,
+  predictor = pred_cv_logitup$Si,
+  levels = c("No", "Si"),
+  direction = "<"
+)
+
+pr_cutoffs_logitupf1 <- data.frame(pROC::coords(
+  roc = roc_logitupf1,
+  x = seq(0, 1, length = 100),
+  ret = c('threshold', 'precision', 'recall')
+)) |>
+  mutate(F1 = (2 * precision * recall) / (precision + recall))
+
+best_cutoff_logitupf1 <- pr_cutoffs_logitupf1 |> slice_max(F1, n = 1)
+best_cutoff_logitupf1
+
+cm_logitupf1_pr <- calcular_metricas(logit_up05, umbral = best_cutoff_logitupf1$threshold,
+                                     strategy = "Logit EN - Oversampling - umbral óptimo PR")
+cm_logitupf1_pr
+
+model_comparison_up <- bind_rows(
+  cm_logit_roc,
+  cm_logitf1_pr,
+  cm_logitup05,
+  cm_logitupf1_pr
+) |> arrange(desc(F1))
+
+model_comparison_up
+
+umbral_logitupf1 <- best_cutoff_logitupf1$threshold
+
+predictSample_logitupf1 <- db_test |>
+  mutate(pobre_prob = predict(logit_up05, newdata = db_test, type = "prob")[["Si"]],
+         pobre_lab = ifelse(pobre_prob >= umbral_logitupf1, "Si", "No"),
+         pobre = if_else(pobre_lab == "Si", 1L, 0L)) |>
+  select(id, pobre)
+
+lambda_str_logitupf1 <- round(logit_up05$bestTune$lambda, 4)
+alpha_str_logitupf1  <- round(logit_up05$bestTune$alpha, 2)
+prob_str_logitupf1   <- round(umbral_logitupf1, 3)
+name_logitupf1 <- paste0("EN_up_lambda_", lambda_str_logitupf1,
+                         "_alpha_", alpha_str_logitupf1,
+                         "_prob_", prob_str_logitupf1, ".csv")
+
+write.csv(predictSample_logitupf1, name_logitupf1, row.names = FALSE)
+
+# MODELO 10: BAGGING - UMBRAL FIJO 0.5 -----------------------------------------
+
+
+# mtry = número total de predictores (bagging usa todas las variables en cada
+# partición; esto es lo que lo distingue de random forest).
+num_predictores_bag <- ncol(db_train) - 1
+
+set.seed(2026)
+bag_fijo <- ranger(
+  formula = Pobre ~ .,
+  data = db_train,
+  probability = TRUE,
+  splitrule = "gini",
+  num.trees = 500,
+  mtry = num_predictores_bag,
+  min.node.size = 1,
+  importance = "permutation"
+)
+
+bag_fijo
+bag_fijo$prediction.error
+
+# Probabilidades OOB (out-of-bag), equivalentes a las predicciones out-of-fold
+# de caret: cada observación se predice solo con los árboles que no la
+# incluyeron en su muestra bootstrap.
+pred_cv_bag_fijo <- tibble(
+  obs = db_train$Pobre,
+  Si  = bag_fijo$predictions[, "Si"]
+)
+
+cm_bag_fijo <- confusionMatrix(
+  data = factor(ifelse(pred_cv_bag_fijo$Si >= 0.5, "Si", "No"),
+                levels = levels(pred_cv_bag_fijo$obs)),
+  reference = pred_cv_bag_fijo$obs,
+  positive = "Si",
+  mode = "prec_recall"
+)
+cm_bag_fijo
+
+# Importancia de variables (permutation)
+importancia_bag_fijo <- sort(bag_fijo$variable.importance, decreasing = TRUE)
+importancia_bag_fijo
+
+# Predicción sobre test
+prob_bag_fijo <- predict(bag_fijo, data = db_test)$predictions[, "Si"]
+
+predictSample_bag_fijo <- db_test |>
+  mutate(pobre_prob = prob_bag_fijo,
+         pobre_lab = ifelse(pobre_prob >= 0.5, "Si", "No"),
+         pobre = if_else(pobre_lab == "Si", 1L, 0L)) |>
+  select(id, pobre)
+
+write.csv(predictSample_bag_fijo, "Bagging.csv", row.names = FALSE)
+
+
+# MODELO 11: BAGGING - UMBRAL OPTIMO EN CURVA PR ------------------------------
+
+
+# Reutiliza las probabilidades OOB de bag_fijo (mismo modelo, no se re-estima)
+roc_bagf1 <- pROC::roc(
+  response  = pred_cv_bag_fijo$obs,
+  predictor = pred_cv_bag_fijo$Si,
+  levels = c("No", "Si"),
+  direction = "<"
+)
+
+pr_cutoffs_bagf1 <- data.frame(pROC::coords(
+  roc = roc_bagf1,
+  x = seq(0, 1, length = 100),
+  ret = c('threshold', 'precision', 'recall')
+)) |>
+  mutate(F1 = (2 * precision * recall) / (precision + recall))
+
+best_cutoff_bagf1 <- pr_cutoffs_bagf1 |> slice_max(F1, n = 1)
+best_cutoff_bagf1
+
+cm_bagf1_pr <- confusionMatrix(
+  data = factor(ifelse(pred_cv_bag_fijo$Si >= best_cutoff_bagf1$threshold, "Si", "No"),
+                levels = levels(pred_cv_bag_fijo$obs)),
+  reference = pred_cv_bag_fijo$obs,
+  positive = "Si",
+  mode = "prec_recall"
+)
+cm_bagf1_pr
+
+umbral_bagf1 <- best_cutoff_bagf1$threshold
+
+predictSample_bagf1 <- db_test |>
+  mutate(pobre_prob = prob_bag_fijo,
+         pobre_lab = ifelse(pobre_prob >= umbral_bagf1, "Si", "No"),
+         pobre = if_else(pobre_lab == "Si", 1L, 0L)) |>
+  select(id, pobre)
+
+name_bagf1 <- paste0("Bagging_F1_prob_", round(umbral_bagf1, 3), ".csv")
+write.csv(predictSample_bagf1, name_bagf1, row.names = FALSE)
+
+
+# MODELO 12: BAGGING CON REBALANCEO - UMBRAL OPTIMO EN CURVA PR ----------------
+
+# ranger no tiene un equivalente directo a sampling = "up" de trainControl.
+# El rebalanceo se logra con case.weights: un peso por observación que
+# aumenta la probabilidad de que las observaciones de la clase minoritaria
+# ("Si") sean seleccionadas en cada muestra bootstrap. El peso de cada clase
+# es inversamente proporcional a su frecuencia (n_total / (n_clases * n_clase)),
+# de forma que ambas clases contribuyen con el mismo peso total al ajuste.
+n_si <- sum(db_train$Pobre == "Si")
+n_no <- sum(db_train$Pobre == "No")
+n_total <- n_si + n_no
+
+pesos_bag_up <- ifelse(db_train$Pobre == "Si",
+                       n_total / (2 * n_si),
+                       n_total / (2 * n_no))
+
+set.seed(2026)
+bag_up <- ranger(
+  formula = Pobre ~ .,
+  data = db_train,
+  probability = TRUE,
+  splitrule = "gini",
+  num.trees = 500,
+  mtry = num_predictores_bag,
+  min.node.size = 1,
+  importance = "permutation",
+  replace = TRUE,
+  case.weights = pesos_bag_up
+)
+
+bag_up
+bag_up$prediction.error
+
+pred_cv_bag_up <- tibble(
+  obs = db_train$Pobre,
+  Si  = bag_up$predictions[, "Si"]
+)
+
+roc_bagupf1 <- pROC::roc(
+  response  = pred_cv_bag_up$obs,
+  predictor = pred_cv_bag_up$Si,
+  levels = c("No", "Si"),
+  direction = "<"
+)
+
+pr_cutoffs_bagupf1 <- data.frame(pROC::coords(
+  roc = roc_bagupf1,
+  x = seq(0, 1, length = 100),
+  ret = c('threshold', 'precision', 'recall')
+)) |>
+  mutate(F1 = (2 * precision * recall) / (precision + recall))
+
+best_cutoff_bagupf1 <- pr_cutoffs_bagupf1 |> slice_max(F1, n = 1)
+best_cutoff_bagupf1
+
+cm_bagupf1_pr <- confusionMatrix(
+  data = factor(ifelse(pred_cv_bag_up$Si >= best_cutoff_bagupf1$threshold, "Si", "No"),
+                levels = levels(pred_cv_bag_up$obs)),
+  reference = pred_cv_bag_up$obs,
+  positive = "Si",
+  mode = "prec_recall"
+)
+cm_bagupf1_pr
+
+umbral_bagupf1 <- best_cutoff_bagupf1$threshold
+
+prob_bag_up <- predict(bag_up, data = db_test)$predictions[, "Si"]
+
+predictSample_bagupf1 <- db_test |>
+  mutate(pobre_prob = prob_bag_up,
+         pobre_lab = ifelse(pobre_prob >= umbral_bagupf1, "Si", "No"),
+         pobre = if_else(pobre_lab == "Si", 1L, 0L)) |>
+  select(id, pobre)
+
+name_bagupf1 <- paste0("Bagging_up_F1_prob_", round(umbral_bagupf1, 3), ".csv")
+write.csv(predictSample_bagupf1, name_bagupf1, row.names = FALSE)
+
+# MODELO 13: RANDOM FOREST (RANGER VIA CARET) - SELECCION POR ROC, UMBRAL 0.5---
+
+
+rf_grid <- expand.grid(
+  mtry = c(2, 5, 7),
+  min.node.size = c(1, 5, 10, 20, 40, 50),
+  splitrule = "gini"
+)
+
+set.seed(2026)
+rf_roc <- train(
+  Pobre ~ .,
+  data = db_train,
+  method = "ranger",
+  metric = "ROC",
+  maximize = TRUE,
+  trControl = ctrl_roc,
+  tuneGrid = rf_grid,
+  num.trees = 500
+  # Sin importance: se calcula aparte, una sola vez, sobre el modelo ganador
+)
+
+rf_roc
+rf_roc$bestTune
+
+pred_cv_rf_roc <- rf_roc$pred |>
+  filter(mtry == rf_roc$bestTune$mtry,
+         min.node.size == rf_roc$bestTune$min.node.size,
+         splitrule == rf_roc$bestTune$splitrule)
+
+cm_rf_roc <- confusionMatrix(
+  data = factor(ifelse(pred_cv_rf_roc$Si >= 0.5, "Si", "No"),
+                levels = levels(pred_cv_rf_roc$obs)),
+  reference = pred_cv_rf_roc$obs,
+  positive = "Si",
+  mode = "prec_recall"
+)
+cm_rf_roc
+
+# Importancia de variables: se recalcula una sola vez, fijando los
+# hiperparámetros ganadores, sobre todo db_train (no durante el tuning).
+set.seed(2026)
+rf_roc_importancia <- ranger(
+  formula = Pobre ~ .,
+  data = db_train,
+  probability = TRUE,
+  splitrule = as.character(rf_roc$bestTune$splitrule),
+  num.trees = 500,
+  mtry = rf_roc$bestTune$mtry,
+  min.node.size = rf_roc$bestTune$min.node.size,
+  importance = "permutation"
+)
+
+importancia_rf_roc <- sort(rf_roc_importancia$variable.importance, decreasing = TRUE)
+importancia_rf_roc
+
+predictSample_rf_roc <- db_test |>
+  mutate(pobre_prob = predict(rf_roc, newdata = db_test, type = "prob")[["Si"]],
+         pobre_lab = ifelse(pobre_prob >= 0.5, "Si", "No"),
+         pobre = if_else(pobre_lab == "Si", 1L, 0L)) |>
+  select(id, pobre)
+
+write.csv(predictSample_rf_roc, "RandomForest.csv", row.names = FALSE)
+
+# MODELO 14: RANDOM FOREST - UMBRAL OPTIMO EN CURVA PR -------------------------
+
+
+#alibramos el umbral de clasificación maximizando F1 en la curva PR.
+
+roc_rff1 <- pROC::roc(
+  response  = pred_cv_rf_roc$obs,
+  predictor = pred_cv_rf_roc$Si,
+  levels = c("No", "Si"),
+  direction = "<"
+)
+
+pr_cutoffs_rff1 <- data.frame(pROC::coords(
+  roc = roc_rff1,
+  x = seq(0, 1, length = 100),
+  ret = c('threshold', 'precision', 'recall')
+)) |>
+  mutate(F1 = (2 * precision * recall) / (precision + recall))
+
+best_cutoff_rff1 <- pr_cutoffs_rff1 |> slice_max(F1, n = 1)
+best_cutoff_rff1
+
+cm_rff1_pr <- confusionMatrix(
+  data = factor(ifelse(pred_cv_rf_roc$Si >= best_cutoff_rff1$threshold, "Si", "No"),
+                levels = levels(pred_cv_rf_roc$obs)),
+  reference = pred_cv_rf_roc$obs,
+  positive = "Si",
+  mode = "prec_recall"
+)
+cm_rff1_pr
+
+umbral_rff1 <- best_cutoff_rff1$threshold
+
+predictSample_rff1 <- db_test |>
+  mutate(pobre_prob = predict(rf_roc, newdata = db_test, type = "prob")[["Si"]],
+         pobre_lab = ifelse(pobre_prob >= umbral_rff1, "Si", "No"),
+         pobre = if_else(pobre_lab == "Si", 1L, 0L)) |>
+  select(id, pobre)
+
+name_rff1 <- paste0("RandomForest_F1_prob_", round(umbral_rff1, 3), ".csv")
+write.csv(predictSample_rff1, name_rff1, row.names = FALSE)
+
+# MODELO 15: RANDOM FOREST CON OVERSAMPLING SELECCION POR ROC, UMBRAL OPTIMO EN CURVA PR
+
+
+set.seed(2026)
+rf_up <- train(
+  Pobre ~ .,
+  data = db_train,
+  method = "ranger",
+  metric = "ROC",
+  maximize = TRUE,
+  trControl = ctrl_up,
+  tuneGrid = rf_grid,
+  num.trees = 500
+  # Sin importance: se calcula aparte, una sola vez, sobre el modelo ganador
+)
+
+rf_up
+rf_up$bestTune
+
+pred_cv_rf_up <- rf_up$pred |>
+  filter(mtry == rf_up$bestTune$mtry,
+         min.node.size == rf_up$bestTune$min.node.size,
+         splitrule == rf_up$bestTune$splitrule)
+
+# Umbral fijo 0.5 (para comparar contra el umbral calibrado)
+cm_rfup05 <- confusionMatrix(
+  data = factor(ifelse(pred_cv_rf_up$Si >= 0.5, "Si", "No"),
+                levels = levels(pred_cv_rf_up$obs)),
+  reference = pred_cv_rf_up$obs,
+  positive = "Si",
+  mode = "prec_recall"
+)
+cm_rfup05
+
+# Calibración del umbral maximizando F1 en la curva PR
+roc_rfupf1 <- pROC::roc(
+  response  = pred_cv_rf_up$obs,
+  predictor = pred_cv_rf_up$Si,
+  levels = c("No", "Si"),
+  direction = "<"
+)
+
+pr_cutoffs_rfupf1 <- data.frame(pROC::coords(
+  roc = roc_rfupf1,
+  x = seq(0, 1, length = 100),
+  ret = c('threshold', 'precision', 'recall')
+)) |>
+  mutate(F1 = (2 * precision * recall) / (precision + recall))
+
+best_cutoff_rfupf1 <- pr_cutoffs_rfupf1 |> slice_max(F1, n = 1)
+best_cutoff_rfupf1
+
+cm_rfupf1_pr <- confusionMatrix(
+  data = factor(ifelse(pred_cv_rf_up$Si >= best_cutoff_rfupf1$threshold, "Si", "No"),
+                levels = levels(pred_cv_rf_up$obs)),
+  reference = pred_cv_rf_up$obs,
+  positive = "Si",
+  mode = "prec_recall"
+)
+cm_rfupf1_pr
+
+# Importancia de variables: se recalcula una sola vez, fijando los
+# hiperparámetros ganadores y los pesos de clase, sobre todo db_train.
+set.seed(2026)
+rf_up_importancia <- ranger(
+  formula = Pobre ~ .,
+  data = db_train,
+  probability = TRUE,
+  splitrule = as.character(rf_up$bestTune$splitrule),
+  num.trees = 500,
+  mtry = rf_up$bestTune$mtry,
+  min.node.size = rf_up$bestTune$min.node.size,
+  importance = "permutation",
+  case.weights = pesos_bag_up
+)
+
+importancia_rf_up <- sort(rf_up_importancia$variable.importance, decreasing = TRUE)
+importancia_rf_up
+
+# Comparación: con/sin rebalanceo, umbral 0.5 vs umbral óptimo PR
+model_comparison_rf_up <- bind_rows(
+  tibble(strategy = "RF - ROC - umbral 0.5", threshold = 0.5,
+         precision = unname(cm_rf_roc$byClass["Precision"]),
+         recall = unname(cm_rf_roc$byClass["Recall"]),
+         F1 = unname(cm_rf_roc$byClass["F1"])),
+  tibble(strategy = "RF - F1 - umbral óptimo PR", threshold = umbral_rff1,
+         precision = unname(cm_rff1_pr$byClass["Precision"]),
+         recall = unname(cm_rff1_pr$byClass["Recall"]),
+         F1 = unname(cm_rff1_pr$byClass["F1"])),
+  tibble(strategy = "RF - Oversampling - umbral 0.5", threshold = 0.5,
+         precision = unname(cm_rfup05$byClass["Precision"]),
+         recall = unname(cm_rfup05$byClass["Recall"]),
+         F1 = unname(cm_rfup05$byClass["F1"])),
+  tibble(strategy = "RF - Oversampling - umbral óptimo PR", threshold = umbral_rfupf1,
+         precision = unname(cm_rfupf1_pr$byClass["Precision"]),
+         recall = unname(cm_rfupf1_pr$byClass["Recall"]),
+         F1 = unname(cm_rfupf1_pr$byClass["F1"]))
+) |> arrange(desc(F1))
+
+model_comparison_rf_up
+
+umbral_rfupf1 <- best_cutoff_rfupf1$threshold
+
+predictSample_rfupf1 <- db_test |>
+  mutate(pobre_prob = predict(rf_up, newdata = db_test, type = "prob")[["Si"]],
+         pobre_lab = ifelse(pobre_prob >= umbral_rfupf1, "Si", "No"),
+         pobre = if_else(pobre_lab == "Si", 1L, 0L)) |>
+  select(id, pobre)
+
+name_rfupf1 <- paste0("RandomForest_up_F1_prob_", round(umbral_rfupf1, 3), ".csv")
+write.csv(predictSample_rfupf1, name_rfupf1, row.names = FALSE)
