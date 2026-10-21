@@ -24,7 +24,7 @@ pacman::p_load(glmnet, MLmetrics, naivebayes, pROC, docstring,ranger,# Para bagg
                gbm,          # Gradient Boosting Models. 
                lightgbm,     # LightGBM
                xgboost,      # XGBoost
-               conflicted)
+               conflicted, adabag, fastAdaboost)
 conflicted::conflicts_prefer(dplyr::filter)
 
 setwd("C:/Users/aeste/OneDrive/Documentos/10 Semestre/Big Data ML/Taller 2")
@@ -480,19 +480,29 @@ ctrl_roc <- trainControl(
 
 # Control con métrica F1 (prSummary, umbral fijo de 0.5 internamente): usado
 # para seleccionar hiperparámetros maximizando F1 directamente.
+# F1 de la clase "Si" (prSummary calcula F para la primera categoría, "No")
+f1_si <- function(data, lev = NULL, model = NULL) {
+  tp <- sum(data$obs == "Si" & data$pred == "Si")
+  fp <- sum(data$obs == "No" & data$pred == "Si")
+  fn <- sum(data$obs == "Si" & data$pred == "No")
+  c(Precision = ifelse(tp + fp == 0, 0, tp / (tp + fp)),
+    Recall    = ifelse(tp + fn == 0, 0, tp / (tp + fn)),
+    F         = ifelse(2 * tp + fp + fn == 0, 0, 2 * tp / (2 * tp + fp + fn)))
+}
+
 ctrl_f1 <- trainControl(
   method = "cv",
   number = 5,
   index = folds,
   classProbs = TRUE,
-  summaryFunction = prSummary,
+  summaryFunction = f1_si,
   savePredictions = "final"
 )
 
 # Función de resumen combinada: Accuracy (defaultSummary) + F1 (prSummary)
 multiStats <- function(data, lev = NULL, model = NULL) {
   c(defaultSummary(data, lev, model),
-    prSummary(data, lev, model))
+    f1_si(data, lev, model))
 }
 
 ctrl_accuracy <- trainControl(
@@ -511,6 +521,15 @@ ctrl_up <- trainControl(
   index = folds,
   classProbs = TRUE,
   summaryFunction = twoClassSummary,
+  sampling = "up",
+  savePredictions = "final"
+)
+ctrl_up_f1 <- trainControl(
+  method = "cv",
+  number = 5,
+  index = folds,
+  classProbs = TRUE,
+  summaryFunction = f1_si,
   sampling = "up",
   savePredictions = "final"
 )
@@ -929,23 +948,32 @@ name_logitup05 <- paste0("EN_up_lambda_", lambda_str_logitup05,
 write.csv(predictSample_logitup05, name_logitup05, row.names = FALSE)
 
 
-################################################################################
-# MODELO 9: LOGIT ELASTIC NET CON OVERSAMPLING - UMBRAL OPTIMO EN CURVA PR
-################################################################################
 
-# NOTA IMPORTANTE: la selección de alpha/lambda se hace por ROC (no por F
-# directo con prSummary), porque con oversampling + umbral fijo de 0.5 el
-# cálculo de F puede colapsar y seleccionar un modelo degenerado (ver
-# diagnóstico: AUC = 0, probabilidades predichas constantes en 0.5). Por eso
-# se reutiliza el mismo modelo logit_up05 (seleccionado por ROC con
-# oversampling) y SOLO se calibra el umbral de clasificación maximizando F1
-# en la curva precision-recall. Esto preserva F1 como métrica final reportada
-# sin sufrir la inestabilidad de prSummary durante la búsqueda de
-# hiperparámetros.
+# MODELO 9: LOGIT ELASTIC NET CON OVERSAMPLING - UMBRAL OPTIMO EN CURVA PR------
 
-pred_cv_logitup <- logit_up05$pred |>
-  filter(alpha == logit_up05$bestTune$alpha,
-         lambda == logit_up05$bestTune$lambda)
+set.seed(2026)
+logit_upf1 <- train(
+  Pobre ~ .,
+  data = db_train,
+  metric = "F",
+  maximize = TRUE,
+  trControl = ctrl_up_f1,
+  tuneGrid = tune_grid,
+  method = "glmnet",
+  family = "binomial",
+  standardize = TRUE
+)
+
+logit_upf1
+logit_upf1$bestTune
+
+pred_cv_logitup <- logit_upf1$pred |>
+  filter(alpha == logit_upf1$bestTune$alpha,
+         lambda == logit_upf1$bestTune$lambda)
+
+# Verificación de colapso: sd(Si) debe ser claramente mayor que 0
+summary(pred_cv_logitup$Si)
+sd(pred_cv_logitup$Si)
 
 roc_logitupf1 <- pROC::roc(
   response  = pred_cv_logitup$obs,
@@ -964,8 +992,8 @@ pr_cutoffs_logitupf1 <- data.frame(pROC::coords(
 best_cutoff_logitupf1 <- pr_cutoffs_logitupf1 |> slice_max(F1, n = 1)
 best_cutoff_logitupf1
 
-cm_logitupf1_pr <- calcular_metricas(logit_up05, umbral = best_cutoff_logitupf1$threshold,
-                                     strategy = "Logit EN - Oversampling - umbral óptimo PR")
+cm_logitupf1_pr <- calcular_metricas(logit_upf1, umbral = best_cutoff_logitupf1$threshold,
+                                     strategy = "Logit EN - Oversampling - F - umbral óptimo PR")
 cm_logitupf1_pr
 
 model_comparison_up <- bind_rows(
@@ -980,20 +1008,19 @@ model_comparison_up
 umbral_logitupf1 <- best_cutoff_logitupf1$threshold
 
 predictSample_logitupf1 <- db_test |>
-  mutate(pobre_prob = predict(logit_up05, newdata = db_test, type = "prob")[["Si"]],
+  mutate(pobre_prob = predict(logit_upf1, newdata = db_test, type = "prob")[["Si"]],
          pobre_lab = ifelse(pobre_prob >= umbral_logitupf1, "Si", "No"),
          pobre = if_else(pobre_lab == "Si", 1L, 0L)) |>
   select(id, pobre)
 
-lambda_str_logitupf1 <- round(logit_up05$bestTune$lambda, 4)
-alpha_str_logitupf1  <- round(logit_up05$bestTune$alpha, 2)
+lambda_str_logitupf1 <- round(logit_upf1$bestTune$lambda, 4)
+alpha_str_logitupf1  <- round(logit_upf1$bestTune$alpha, 2)
 prob_str_logitupf1   <- round(umbral_logitupf1, 3)
 name_logitupf1 <- paste0("EN_up_lambda_", lambda_str_logitupf1,
                          "_alpha_", alpha_str_logitupf1,
                          "_prob_", prob_str_logitupf1, ".csv")
 
 write.csv(predictSample_logitupf1, name_logitupf1, row.names = FALSE)
-
 # MODELO 10: BAGGING - UMBRAL FIJO 0.5 -----------------------------------------
 
 
@@ -1235,11 +1262,31 @@ write.csv(predictSample_rf_roc, "RandomForest.csv", row.names = FALSE)
 # MODELO 14: RANDOM FOREST - UMBRAL OPTIMO EN CURVA PR -------------------------
 
 
-#alibramos el umbral de clasificación maximizando F1 en la curva PR.
+set.seed(2026)
+rf_f1 <- train(
+  Pobre ~ .,
+  data = db_train,
+  method = "ranger",
+  metric = "F",
+  maximize = TRUE,
+  trControl = ctrl_f1,
+  tuneGrid = rf_grid,
+  num.trees = 500
+)
+
+rf_f1
+rf_f1$bestTune
+
+pred_cv_rf_f1 <- rf_f1$pred |>
+  filter(mtry == rf_f1$bestTune$mtry,
+         min.node.size == rf_f1$bestTune$min.node.size,
+         splitrule == rf_f1$bestTune$splitrule)
+
+# Calibramos el umbral de clasificación maximizando F1 en la curva PR.
 
 roc_rff1 <- pROC::roc(
-  response  = pred_cv_rf_roc$obs,
-  predictor = pred_cv_rf_roc$Si,
+  response  = pred_cv_rf_f1$obs,
+  predictor = pred_cv_rf_f1$Si,
   levels = c("No", "Si"),
   direction = "<"
 )
@@ -1255,9 +1302,9 @@ best_cutoff_rff1 <- pr_cutoffs_rff1 |> slice_max(F1, n = 1)
 best_cutoff_rff1
 
 cm_rff1_pr <- confusionMatrix(
-  data = factor(ifelse(pred_cv_rf_roc$Si >= best_cutoff_rff1$threshold, "Si", "No"),
-                levels = levels(pred_cv_rf_roc$obs)),
-  reference = pred_cv_rf_roc$obs,
+  data = factor(ifelse(pred_cv_rf_f1$Si >= best_cutoff_rff1$threshold, "Si", "No"),
+                levels = levels(pred_cv_rf_f1$obs)),
+  reference = pred_cv_rf_f1$obs,
   positive = "Si",
   mode = "prec_recall"
 )
@@ -1266,15 +1313,14 @@ cm_rff1_pr
 umbral_rff1 <- best_cutoff_rff1$threshold
 
 predictSample_rff1 <- db_test |>
-  mutate(pobre_prob = predict(rf_roc, newdata = db_test, type = "prob")[["Si"]],
+  mutate(pobre_prob = predict(rf_f1, newdata = db_test, type = "prob")[["Si"]],
          pobre_lab = ifelse(pobre_prob >= umbral_rff1, "Si", "No"),
          pobre = if_else(pobre_lab == "Si", 1L, 0L)) |>
   select(id, pobre)
 
 name_rff1 <- paste0("RandomForest_F1_prob_", round(umbral_rff1, 3), ".csv")
 write.csv(predictSample_rff1, name_rff1, row.names = FALSE)
-
-# MODELO 15: RANDOM FOREST CON OVERSAMPLING SELECCION POR ROC, UMBRAL OPTIMO EN CURVA PR
+# MODELO 15: RANDOM FOREST CON OVERSAMPLING SELECCION POR F, UMBRAL OPTIMO EN CURVA PR
 
 
 set.seed(2026)
@@ -1282,9 +1328,9 @@ rf_up <- train(
   Pobre ~ .,
   data = db_train,
   method = "ranger",
-  metric = "ROC",
+  metric = "F",
   maximize = TRUE,
-  trControl = ctrl_up,
+  trControl = ctrl_up_f1,
   tuneGrid = rf_grid,
   num.trees = 500
   # Sin importance: se calcula aparte, una sola vez, sobre el modelo ganador
@@ -1385,3 +1431,198 @@ predictSample_rfupf1 <- db_test |>
 
 name_rfupf1 <- paste0("RandomForest_up_F1_prob_", round(umbral_rfupf1, 3), ".csv")
 write.csv(predictSample_rfupf1, name_rfupf1, row.names = FALSE)
+
+# MODELO 16: ADABOOST.M1 - SELECCION POR ROC, UMBRAL 0.5------------------------
+
+ada_grid <- expand.grid(
+  mfinal = c(100, 200, 500),
+  maxdepth = 1,
+  coeflearn = c("Breiman", "Freund")
+)
+
+predictores_ada <- setdiff(names(db_train), "Pobre")
+
+set.seed(2026)
+ada_roc <- train(
+  x = as.data.frame(db_train[, predictores_ada]),
+  y = db_train$Pobre,
+  method = "AdaBoost.M1",
+  trControl = ctrl_roc,
+  metric = "ROC",
+  maximize = TRUE,
+  tuneGrid = ada_grid
+)
+
+ada_roc
+ada_roc$bestTune
+
+pred_cv_ada_roc <- ada_roc$pred |>
+  dplyr::filter(mfinal == ada_roc$bestTune$mfinal,
+                maxdepth == ada_roc$bestTune$maxdepth,
+                coeflearn == ada_roc$bestTune$coeflearn)
+
+cm_ada_roc <- confusionMatrix(
+  data = factor(ifelse(pred_cv_ada_roc$Si >= 0.5, "Si", "No"),
+                levels = levels(pred_cv_ada_roc$obs)),
+  reference = pred_cv_ada_roc$obs,
+  positive = "Si",
+  mode = "prec_recall"
+)
+cm_ada_roc
+
+predictSample_ada_roc <- db_test |>
+  mutate(pobre_prob = predict(ada_roc, newdata = db_test, type = "prob")[["Si"]],
+         pobre_lab = ifelse(pobre_prob >= 0.5, "Si", "No"),
+         pobre = if_else(pobre_lab == "Si", 1L, 0L)) |>
+  select(id, pobre)
+
+write.csv(predictSample_ada_roc, "AdaBoost.csv", row.names = FALSE)
+
+
+# MODELO 17: ADABOOST.M1 - SELECCION POR F, UMBRAL OPTIMO EN CURVA PR ----------
+set.seed(2026)
+ada_f1 <- train(
+  x = as.data.frame(db_train[, predictores_ada]),
+  y = db_train$Pobre,
+  method = "AdaBoost.M1",
+  trControl = ctrl_f1,
+  metric = "F",
+  maximize = TRUE,
+  tuneGrid = ada_grid
+)
+
+ada_f1
+ada_f1$bestTune
+
+pred_cv_ada_f1 <- ada_f1$pred |>
+  dplyr::filter(mfinal == ada_f1$bestTune$mfinal,
+                maxdepth == ada_f1$bestTune$maxdepth,
+                coeflearn == ada_f1$bestTune$coeflearn)
+
+roc_adaf1 <- pROC::roc(
+  response  = pred_cv_ada_f1$obs,
+  predictor = pred_cv_ada_f1$Si,
+  levels = c("No", "Si"),
+  direction = "<"
+)
+
+pr_cutoffs_adaf1 <- data.frame(pROC::coords(
+  roc = roc_adaf1,
+  x = seq(0, 1, length = 100),
+  ret = c('threshold', 'precision', 'recall')
+)) |>
+  mutate(F1 = (2 * precision * recall) / (precision + recall))
+
+best_cutoff_adaf1 <- pr_cutoffs_adaf1 |> slice_max(F1, n = 1)
+best_cutoff_adaf1
+
+cm_adaf1_pr <- confusionMatrix(
+  data = factor(ifelse(pred_cv_ada_f1$Si >= best_cutoff_adaf1$threshold, "Si", "No"),
+                levels = levels(pred_cv_ada_f1$obs)),
+  reference = pred_cv_ada_f1$obs,
+  positive = "Si",
+  mode = "prec_recall"
+)
+cm_adaf1_pr
+
+umbral_adaf1 <- best_cutoff_adaf1$threshold
+
+predictSample_adaf1 <- db_test |>
+  mutate(pobre_prob = predict(ada_f1, newdata = db_test, type = "prob")[["Si"]],
+         pobre_lab = ifelse(pobre_prob >= umbral_adaf1, "Si", "No"),
+         pobre = if_else(pobre_lab == "Si", 1L, 0L)) |>
+  select(id, pobre)
+
+name_adaf1 <- paste0("AdaBoost_F1_prob_", round(umbral_adaf1, 3), ".csv")
+write.csv(predictSample_adaf1, name_adaf1, row.names = FALSE)
+
+# MODELO 18: ADABOOST.M1 CON OVERSAMPLING SELECCION POR F, UMBRAL OPTIMO EN CURVA PR
+
+set.seed(2026)
+ada_up <- train(
+  x = as.data.frame(db_train[, predictores_ada]),
+  y = db_train$Pobre,
+  method = "AdaBoost.M1",
+  trControl = ctrl_up_f1,
+  metric = "F",
+  maximize = TRUE,
+  tuneGrid = ada_grid
+)
+
+ada_up
+ada_up$bestTune
+
+pred_cv_ada_up <- ada_up$pred |>
+  dplyr::filter(mfinal == ada_up$bestTune$mfinal,
+                maxdepth == ada_up$bestTune$maxdepth,
+                coeflearn == ada_up$bestTune$coeflearn)
+
+# Umbral fijo 0.5
+cm_adaup05 <- confusionMatrix(
+  data = factor(ifelse(pred_cv_ada_up$Si >= 0.5, "Si", "No"),
+                levels = levels(pred_cv_ada_up$obs)),
+  reference = pred_cv_ada_up$obs,
+  positive = "Si",
+  mode = "prec_recall"
+)
+cm_adaup05
+
+# Umbral óptimo en la curva PR
+roc_adaupf1 <- pROC::roc(
+  response  = pred_cv_ada_up$obs,
+  predictor = pred_cv_ada_up$Si,
+  levels = c("No", "Si"),
+  direction = "<"
+)
+
+pr_cutoffs_adaupf1 <- data.frame(pROC::coords(
+  roc = roc_adaupf1,
+  x = seq(0, 1, length = 100),
+  ret = c('threshold', 'precision', 'recall')
+)) |>
+  mutate(F1 = (2 * precision * recall) / (precision + recall))
+
+best_cutoff_adaupf1 <- pr_cutoffs_adaupf1 |> slice_max(F1, n = 1)
+best_cutoff_adaupf1
+
+umbral_adaupf1 <- best_cutoff_adaupf1$threshold
+
+cm_adaupf1_pr <- confusionMatrix(
+  data = factor(ifelse(pred_cv_ada_up$Si >= umbral_adaupf1, "Si", "No"),
+                levels = levels(pred_cv_ada_up$obs)),
+  reference = pred_cv_ada_up$obs,
+  positive = "Si",
+  mode = "prec_recall"
+)
+cm_adaupf1_pr
+
+# Comparación con y sin rebalanceo
+model_comparison_ada_up <- bind_rows(
+  tibble(strategy = "Ada - ROC - umbral 0.5", threshold = 0.5,
+         precision = unname(cm_ada_roc$byClass["Precision"]),
+         recall = unname(cm_ada_roc$byClass["Recall"]),
+         F1 = unname(cm_ada_roc$byClass["F1"])),
+  tibble(strategy = "Ada - F1 - umbral óptimo PR", threshold = umbral_adaf1,
+         precision = unname(cm_adaf1_pr$byClass["Precision"]),
+         recall = unname(cm_adaf1_pr$byClass["Recall"]),
+         F1 = unname(cm_adaf1_pr$byClass["F1"])),
+  tibble(strategy = "Ada - Oversampling - umbral 0.5", threshold = 0.5,
+         precision = unname(cm_adaup05$byClass["Precision"]),
+         recall = unname(cm_adaup05$byClass["Recall"]),
+         F1 = unname(cm_adaup05$byClass["F1"])),
+  tibble(strategy = "Ada - Oversampling - umbral óptimo PR", threshold = umbral_adaupf1,
+         precision = unname(cm_adaupf1_pr$byClass["Precision"]),
+         recall = unname(cm_adaupf1_pr$byClass["Recall"]),
+         F1 = unname(cm_adaupf1_pr$byClass["F1"]))
+) |> arrange(desc(F1))
+
+model_comparison_ada_up
+
+predictSample_adaupf1 <- db_test |>
+  mutate(pobre_prob = predict(ada_up, newdata = db_test, type = "prob")[["Si"]],
+         pobre_lab = ifelse(pobre_prob >= umbral_adaupf1, "Si", "No"),
+         pobre = if_else(pobre_lab == "Si", 1L, 0L)) |>
+  select(id, pobre)
+
+name_adaupf1 <- paste0("AdaBoost_up_F1_prob_", round(umbral_adaupf1, 3), ".csv")
+write.csv(predictSample_adaupf1, name_adaupf1, row.names = FALSE)
