@@ -1626,3 +1626,194 @@ predictSample_adaupf1 <- db_test |>
 
 name_adaupf1 <- paste0("AdaBoost_up_F1_prob_", round(umbral_adaupf1, 3), ".csv")
 write.csv(predictSample_adaupf1, name_adaupf1, row.names = FALSE)
+
+# MODELO 19: GRADIENT BOOSTING - SELECCION POR ROC, UMBRAL FIJO 0.5 -------------
+
+grid_gbm <- expand.grid(n.trees = c(100, 200, 500),
+                        interaction.depth = c(1, 3),
+                        shrinkage = c(0.001, 0.01),
+                        n.minobsinnode = c(20, 50))
+
+set.seed(2026)
+gbm_roc <- train(
+  Pobre ~ .,
+  data = db_train,
+  method = "gbm",
+  metric = "ROC",
+  maximize = TRUE,
+  trControl = ctrl_roc,
+  tuneGrid = grid_gbm,
+  verbose = FALSE
+)
+
+gbm_roc
+gbm_roc$bestTune
+
+pred_cv_gbm_roc <- gbm_roc$pred |>
+  filter(n.trees == gbm_roc$bestTune$n.trees,
+         interaction.depth == gbm_roc$bestTune$interaction.depth,
+         shrinkage == gbm_roc$bestTune$shrinkage,
+         n.minobsinnode == gbm_roc$bestTune$n.minobsinnode)
+
+cm_gbm_roc <- confusionMatrix(
+  data = factor(ifelse(pred_cv_gbm_roc$Si >= 0.5, "Si", "No"),
+                levels = levels(pred_cv_gbm_roc$obs)),
+  reference = pred_cv_gbm_roc$obs,
+  positive = "Si",
+  mode = "prec_recall"
+)
+cm_gbm_roc
+
+predictSample_gbm_roc <- db_test |>
+  mutate(pobre_prob = predict(gbm_roc, newdata = db_test, type = "prob")[["Si"]],
+         pobre_lab = ifelse(pobre_prob >= 0.5, "Si", "No"),
+         pobre = if_else(pobre_lab == "Si", 1L, 0L)) |>
+  select(id, pobre)
+
+name_gbm_roc <- paste0("GBM_trees_", gbm_roc$bestTune$n.trees,
+                       "_depth_", gbm_roc$bestTune$interaction.depth,
+                       "_shrink_", gbm_roc$bestTune$shrinkage,
+                       "_minobs_", gbm_roc$bestTune$n.minobsinnode, ".csv")
+write.csv(predictSample_gbm_roc, name_gbm_roc, row.names = FALSE)
+
+
+# MODELO 20: GRADIENT BOOSTING - SELECCION POR F, UMBRAL OPTIMO EN CURVA PR -----
+
+set.seed(2026)
+gbm_f1 <- train(
+  Pobre ~ .,
+  data = db_train,
+  method = "gbm",
+  metric = "F",
+  maximize = TRUE,
+  trControl = ctrl_f1,
+  tuneGrid = grid_gbm,
+  verbose = FALSE
+)
+
+gbm_f1
+gbm_f1$bestTune
+
+pred_cv_gbm_f1 <- gbm_f1$pred |>
+  filter(n.trees == gbm_f1$bestTune$n.trees,
+         interaction.depth == gbm_f1$bestTune$interaction.depth,
+         shrinkage == gbm_f1$bestTune$shrinkage,
+         n.minobsinnode == gbm_f1$bestTune$n.minobsinnode)
+
+# Calibramos el umbral de clasificación maximizando F1 en la curva PR.
+
+roc_gbmf1 <- pROC::roc(
+  response  = pred_cv_gbm_f1$obs,
+  predictor = pred_cv_gbm_f1$Si,
+  levels = c("No", "Si"),
+  direction = "<"
+)
+
+pr_cutoffs_gbmf1 <- data.frame(pROC::coords(
+  roc = roc_gbmf1,
+  x = seq(0, 1, length = 100),
+  ret = c('threshold', 'precision', 'recall')
+)) |>
+  mutate(F1 = (2 * precision * recall) / (precision + recall))
+
+best_cutoff_gbmf1 <- pr_cutoffs_gbmf1 |> slice_max(F1, n = 1)
+best_cutoff_gbmf1
+
+cm_gbmf1_pr <- confusionMatrix(
+  data = factor(ifelse(pred_cv_gbm_f1$Si >= best_cutoff_gbmf1$threshold, "Si", "No"),
+                levels = levels(pred_cv_gbm_f1$obs)),
+  reference = pred_cv_gbm_f1$obs,
+  positive = "Si",
+  mode = "prec_recall"
+)
+cm_gbmf1_pr
+
+umbral_gbmf1 <- best_cutoff_gbmf1$threshold
+
+predictSample_gbmf1 <- db_test |>
+  mutate(pobre_prob = predict(gbm_f1, newdata = db_test, type = "prob")[["Si"]],
+         pobre_lab = ifelse(pobre_prob >= umbral_gbmf1, "Si", "No"),
+         pobre = if_else(pobre_lab == "Si", 1L, 0L)) |>
+  select(id, pobre)
+
+name_gbmf1 <- paste0("GBM_F1_trees_", gbm_f1$bestTune$n.trees,
+                     "_depth_", gbm_f1$bestTune$interaction.depth,
+                     "_shrink_", gbm_f1$bestTune$shrinkage,
+                     "_prob_", round(umbral_gbmf1, 3), ".csv")
+write.csv(predictSample_gbmf1, name_gbmf1, row.names = FALSE)
+
+
+# MODELO 21: GRADIENT BOOSTING CON OVERSAMPLING - SELECCION POR F, UMBRAL PR ----
+
+set.seed(2026)
+gbm_upF <- train(
+  Pobre ~ .,
+  data = db_train,
+  method = "gbm",
+  metric = "F",
+  maximize = TRUE,
+  trControl = ctrl_up_f1,
+  tuneGrid = grid_gbm,
+  verbose = FALSE
+)
+
+gbm_upF
+gbm_upF$bestTune
+
+pred_cv_gbm_up <- gbm_upF$pred |>
+  filter(n.trees == gbm_upF$bestTune$n.trees,
+         interaction.depth == gbm_upF$bestTune$interaction.depth,
+         shrinkage == gbm_upF$bestTune$shrinkage,
+         n.minobsinnode == gbm_upF$bestTune$n.minobsinnode)
+
+# Verificación de colapso: sd(Si) debe ser claramente mayor que 0
+summary(pred_cv_gbm_up$Si)
+sd(pred_cv_gbm_up$Si)
+
+roc_gbmupF <- pROC::roc(
+  response  = pred_cv_gbm_up$obs,
+  predictor = pred_cv_gbm_up$Si,
+  levels = c("No", "Si"),
+  direction = "<"
+)
+
+pr_cutoffs_gbmupF <- data.frame(pROC::coords(
+  roc = roc_gbmupF,
+  x = seq(0, 1, length = 100),
+  ret = c('threshold', 'precision', 'recall')
+)) |>
+  mutate(F1 = (2 * precision * recall) / (precision + recall))
+
+best_cutoff_gbmupF <- pr_cutoffs_gbmupF |> slice_max(F1, n = 1)
+best_cutoff_gbmupF
+
+cm_gbmup05 <- confusionMatrix(
+  data = factor(ifelse(pred_cv_gbm_up$Si >= 0.5, "Si", "No"),
+                levels = levels(pred_cv_gbm_up$obs)),
+  reference = pred_cv_gbm_up$obs,
+  positive = "Si",
+  mode = "prec_recall"
+)
+
+cm_gbmupF_pr <- confusionMatrix(
+  data = factor(ifelse(pred_cv_gbm_up$Si >= best_cutoff_gbmupF$threshold, "Si", "No"),
+                levels = levels(pred_cv_gbm_up$obs)),
+  reference = pred_cv_gbm_up$obs,
+  positive = "Si",
+  mode = "prec_recall"
+)
+cm_gbmupF_pr
+
+umbral_gbmupF <- best_cutoff_gbmupF$threshold
+
+predictSample_gbmupF <- db_test |>
+  mutate(pobre_prob = predict(gbm_upF, newdata = db_test, type = "prob")[["Si"]],
+         pobre_lab = ifelse(pobre_prob >= umbral_gbmupF, "Si", "No"),
+         pobre = if_else(pobre_lab == "Si", 1L, 0L)) |>
+  select(id, pobre)
+
+name_gbmupF <- paste0("GBM_up_F1_trees_", gbm_upF$bestTune$n.trees,
+                      "_depth_", gbm_upF$bestTune$interaction.depth,
+                      "_shrink_", gbm_upF$bestTune$shrinkage,
+                      "_prob_", round(umbral_gbmupF, 3), ".csv")
+write.csv(predictSample_gbmupF, name_gbmupF, row.names = FALSE)
