@@ -29,14 +29,23 @@ conflicted::conflicts_prefer(dplyr::filter)
 
 setwd("C:/Users/aeste/OneDrive/Documentos/10 Semestre/Big Data ML/Taller 2")
 
-db_train_hogares  <- read.csv("train_hogares.csv")
-db_train_personas <- read.csv("train_personas.csv")
-db_test_hogares   <- read.csv("test_hogares.csv")
-db_test_personas  <- read.csv("test_personas.csv")
+# Bases originales.
+raw_train_hogares  <- read.csv("train_hogares.csv")
+raw_train_personas <- read.csv("train_personas.csv")
+raw_test_hogares   <- read.csv("test_hogares.csv")
+raw_test_personas  <- read.csv("test_personas.csv")
 
+db_train_hogares  <- raw_train_hogares
+db_train_personas <- raw_train_personas
+db_test_hogares   <- raw_test_hogares
+db_test_personas  <- raw_test_personas
+
+# Se excluyen las variables de ingreso (filtran la respuesta) y los factores
+# de expansion. Lp y Dominio se conservan porque estan en test y definen la
+# linea de pobreza de cada hogar.
 db_train_hogares <- db_train_hogares |>
-  select(-Ingtotug, -Ingtotugarr, -Ingpcug, -Li, -Lp,
-         -Indigente, -Npobres, -Nindigentes, -Fex_c, -Fex_dpto, -Dominio, -Depto)
+  select(-Ingtotug, -Ingtotugarr, -Ingpcug, -Li,
+         -Indigente, -Npobres, -Nindigentes, -Fex_c, -Fex_dpto, -Depto)
 
 
 # 1. FUNCIONES DE PREPROCESAMIENTO --------------------------------------------
@@ -382,6 +391,151 @@ fun_preprocess_privaciones <- function(.db_hogares, .db_personas_ok) {
 }
 
 
+fun_privaciones_adicionales <- function(.db_personas_raw, .db_privaciones) {
+  #' Agregar empleo informal y conteo de privaciones
+  #'
+  #' @description \code{fun_privaciones_adicionales()} construye la privacion
+  #' de empleo informal del IPM (DANE, 2014), donde el hogar esta privado si
+  #' al menos un ocupado no cotiza a pension. Los pensionados (P6920 = 3) no
+  #' se cuentan como privados. Luego suma las cinco indicadoras en
+  #' \code{num_privaciones}.
+  #'
+  #' @param .db_personas_raw \code{data.frame}. Base original de personas.
+  #' @param .db_privaciones \code{tibble}. Salida de
+  #' \code{fun_preprocess_privaciones()}.
+  #'
+  #' @returns \code{tibble}. Una fila por hogar con \code{id},
+  #' \code{bin_empleo_informal_ipm} y \code{num_privaciones}.
+  informal <- .db_personas_raw |>
+    mutate(bin_ocup_informal = as.integer(Oc %in% 1 & !(P6920 %in% c(1, 3)))) |>
+    group_by(id) |>
+    summarize(bin_empleo_informal_ipm = max(bin_ocup_informal), .groups = "drop")
+  
+  .db_privaciones |>
+    left_join(informal, by = "id") |>
+    mutate(bin_empleo_informal_ipm = replace_na(bin_empleo_informal_ipm, 0L),
+           num_privaciones = bin_hacinamiento + bin_bajo_logro_educ +
+             bin_rezago_escolar + bin_trabajo_infantil +
+             bin_empleo_informal_ipm) |>
+    select(id, bin_empleo_informal_ipm, num_privaciones)
+}
+
+
+# --- Ecuacion de ingreso individual (etapa 1) ---
+
+# Predictores: todas las variables de personas que existen en test, salvo
+# identificadores, factores de expansion y Depto (redundante con Dominio).
+vars_etapa1 <- setdiff(names(raw_test_personas),
+                       c("id", "Orden", "Fex_c", "Fex_dpto", "Depto", "Pet"))
+
+# Variables categoricas sin orden natural
+vars_factor_etapa1 <- c("Dominio", "Oficio", "P6050", "P6100", "P6240",
+                        "P6430", "P7050", "P7350")
+
+formula_etapa1 <- as.formula(paste("y_log_ingtot ~",
+                                   paste(vars_etapa1, collapse = " + ")))
+
+
+fun_preprocess_etapa1 <- function(.db_train, .db_test) {
+  #' Preparar las bases de personas para la ecuacion de ingreso
+  #'
+  #' @description \code{fun_preprocess_etapa1()} conserva solo la poblacion
+  #' en edad de trabajar (Ingtot es NA exactamente para quienes no estan en
+  #' la PET, y su ingreso se fija en 0 al agregar). Los NA estructurales
+  #' (no aplica) se codifican como -1 en las numericas y como "NA" en las
+  #' categoricas, para que el arbol los trate como una categoria propia.
+  #' Los niveles de los factores se fijan con la union de train y test.
+  #'
+  #' @param .db_train,.db_test \code{data.frame}. Bases originales de
+  #' personas.
+  #'
+  #' @returns \code{list} con \code{train} y \code{test}. Cada una incluye
+  #' \code{id}, \code{cod_parentesco} (P6050 original, para definir la
+  #' unidad de gasto) y los predictores. \code{train} incluye ademas
+  #' \code{y_log_ingtot = log1p(Ingtot)}.
+  prep <- function(.db) {
+    .db |>
+      filter(!is.na(Pet)) |>
+      mutate(cod_parentesco = P6050) |>
+      select(id, cod_parentesco, any_of("Ingtot"), all_of(vars_etapa1)) |>
+      mutate(across(all_of(vars_factor_etapa1),
+                    ~ replace_na(as.character(.x), "NA")),
+             across(setdiff(vars_etapa1, vars_factor_etapa1),
+                    ~ replace_na(as.numeric(.x), -1)))
+  }
+  
+  db_tr <- prep(.db_train) |> mutate(y_log_ingtot = log1p(Ingtot)) |> select(-Ingtot)
+  db_te <- prep(.db_test)
+  
+  for (v in vars_factor_etapa1) {
+    niveles <- sort(union(unique(db_tr[[v]]), unique(db_te[[v]])))
+    db_tr[[v]] <- factor(db_tr[[v]], levels = niveles)
+    db_te[[v]] <- factor(db_te[[v]], levels = niveles)
+  }
+  
+  list(train = db_tr, test = db_te)
+}
+
+
+fun_ranger_etapa1 <- function(.data) {
+  #' Ajustar la ecuacion de ingreso individual con ranger
+  #'
+  #' @description Hiperparametros fijos (sin tuning).
+  #' \code{respect.unordered.factors = "order"} ordena las categorias por su
+  #' ingreso medio, lo que permite usar Oficio (82 categorias) y Dominio sin
+  #' crear dummies.
+  #'
+  #' @param .data \code{tibble}. Personas con \code{y_log_ingtot} y los
+  #' predictores de \code{vars_etapa1}.
+  #'
+  #' @returns Objeto \code{ranger}.
+  ranger(
+    formula = formula_etapa1,
+    data = .data,
+    num.trees = 200,
+    mtry = 15,
+    min.node.size = 50,
+    respect.unordered.factors = "order",
+    seed = 2026
+  )
+}
+
+
+fun_agregar_ingreso <- function(.db_personas_pred, .db_hogares_raw) {
+  #' Construir el ingreso per capita predicho de la unidad de gasto (etapa 2)
+  #'
+  #' @description \code{fun_agregar_ingreso()} replica la construccion de
+  #' Ingpcug. Suma el ingreso predicho de las personas de la unidad de gasto
+  #' (excluye P6050 = 6, 7 y 8: servicio domestico, pensionistas y
+  #' trabajadores), suma el arriendo imputado solo cuando P5090 es 1 o 4 y
+  #' P5130 no es 98 ni 99, y divide por Npersug. Con el ingreso observado,
+  #' esta regla reproduce Pobre en el 99,9% de los hogares de train.
+  #'
+  #' @param .db_personas_pred \code{tibble}. Personas de la etapa 1 con
+  #' \code{id}, \code{cod_parentesco} y \code{y_log_hat}.
+  #' @param .db_hogares_raw \code{data.frame}. Base original de hogares.
+  #'
+  #' @returns \code{tibble}. Una fila por hogar con \code{id},
+  #' \code{num_ing_ug_hat}, \code{num_ing_pc_hat} y \code{num_ratio_lp_hat}.
+  ing_ug <- .db_personas_pred |>
+    filter(!cod_parentesco %in% c(6, 7, 8)) |>
+    group_by(id) |>
+    summarize(num_ing_ug_hat = sum(pmax(expm1(y_log_hat), 0)), .groups = "drop")
+  
+  .db_hogares_raw |>
+    select(id, Lp, Npersug, P5090, P5130) |>
+    left_join(ing_ug, by = "id") |>
+    mutate(
+      num_ing_ug_hat = replace_na(num_ing_ug_hat, 0),
+      num_arriendo_imp_dane = ifelse(P5090 %in% c(1, 4) & !(P5130 %in% c(98, 99)),
+                                     replace_na(P5130, 0), 0),
+      num_ing_pc_hat = (num_ing_ug_hat + num_arriendo_imp_dane) / pmax(Npersug, 1),
+      num_ratio_lp_hat = num_ing_pc_hat / Lp
+    ) |>
+    select(id, num_ing_ug_hat, num_ing_pc_hat, num_ratio_lp_hat)
+}
+
+
 # 2. CONSTRUCCION DE LAS BASES FINALES ----------------------------------------
 
 db_train_personas <- fun_preprocess_personas(db_train_personas)
@@ -393,15 +547,20 @@ db_test_personas_nivel_hogar  <- fun_colapse_personas(db_test_personas)
 db_train_privaciones <- fun_preprocess_privaciones(db_train_hogares, db_train_personas)
 db_test_privaciones  <- fun_preprocess_privaciones(db_test_hogares, db_test_personas)
 
+db_train_ipm_extra <- fun_privaciones_adicionales(raw_train_personas, db_train_privaciones)
+db_test_ipm_extra  <- fun_privaciones_adicionales(raw_test_personas,  db_test_privaciones)
+
 db_train <- db_train_hogares |>
   left_join(db_train_personas_nivel_hogar, by = 'id') |>
   left_join(db_train_privaciones, by = 'id') |>
+  left_join(db_train_ipm_extra, by = 'id') |>
   fun_preprocess_hogares() |>
   select(-id)
 
 db_test <- db_test_hogares |>
   left_join(db_test_personas_nivel_hogar, by = 'id') |>
   left_join(db_test_privaciones, by = 'id') |>
+  left_join(db_test_ipm_extra, by = 'id') |>
   fun_preprocess_hogares()
 
 # 1. Preparar la base: caret exige que los niveles de la respuesta sean
@@ -409,9 +568,15 @@ db_test <- db_test_hogares |>
 db_train <- db_train |>
   mutate(Pobre = factor(Pobre, levels = c(0, 1), labels = c("No", "Si")))
 
-# Eliminamos variables repetidas
+# Dominio como factor, con los mismos niveles en train y test
+niveles_dominio <- sort(unique(raw_train_hogares$Dominio))
+db_train <- db_train |> mutate(Dominio = factor(Dominio, levels = niveles_dominio))
+db_test  <- db_test  |> mutate(Dominio = factor(Dominio, levels = niveles_dominio))
+
+# Eliminamos variables repetidas. Npersug se conserva porque es el
+# denominador del ingreso per capita de la unidad de gasto (DANE).
 db_train <- db_train |>
-  select(-Nper, -Npersug, -P5000, -P5010, -P5090)
+  select(-Nper, -P5000, -P5010, -P5090)
 
 # Verificación: no deben quedar NA
 sum(is.na(db_train))
@@ -539,6 +704,79 @@ tune_grid <- expand.grid(
   alpha = seq(0, 1, by = 0.05),
   lambda = 10^seq(log10(100), log10(0.001), length.out = 20)
 )
+
+
+# 5. VARIABLES DE INGRESO PREDICHO (DOS ETAPAS) --------------------------------
+
+# Esta seccion va despues de los folds porque la etapa 1 se estima fuera de
+# muestra con los mismos folds de los modelos, para evitar fuga de la
+# respuesta hacia los predictores.
+
+id_train <- db_train_hogares$id
+stopifnot(length(id_train) == nrow(db_train),
+          identical(id_train, raw_train_hogares$id))
+
+# --- Etapa 1: ecuacion de ingreso individual (ranger, fuera de muestra) ---
+
+etapa1 <- fun_preprocess_etapa1(raw_train_personas, raw_test_personas)
+db_train_etapa1 <- etapa1$train
+db_test_etapa1  <- etapa1$test
+rm(etapa1)
+
+# Fold de cada hogar: el hogar pertenece al fold k cuando queda fuera de
+# folds[[k]] (returnTrain = TRUE). Cada persona hereda el fold de su hogar.
+fold_hogar <- integer(length(id_train))
+for (k in seq_along(folds)) fold_hogar[-folds[[k]]] <- k
+
+db_train_etapa1 <- db_train_etapa1 |>
+  left_join(tibble(id = id_train, fold = fold_hogar), by = "id")
+stopifnot(!anyNA(db_train_etapa1$fold))
+
+# Predicciones fuera de muestra para train: el modelo del fold k se entrena
+# con las personas de los otros cuatro folds y predice las del fold k.
+db_train_etapa1$y_log_hat <- NA_real_
+for (k in seq_along(folds)) {
+  en_k <- db_train_etapa1$fold == k
+  modelo_k <- fun_ranger_etapa1(db_train_etapa1[!en_k, ])
+  db_train_etapa1$y_log_hat[en_k] <-
+    predict(modelo_k, data = db_train_etapa1[en_k, ])$predictions
+  rm(modelo_k); gc()
+  cat("Etapa 1, fold", k, "listo\n")
+}
+
+# Calidad de la etapa 1. El R2 total esta inflado por los ingresos en cero
+# (inactivos, faciles de predecir). El relevante es el de ingreso > 0.
+r2 <- function(y, yhat) 1 - sum((y - yhat)^2) / sum((y - mean(y))^2)
+con_ingreso <- db_train_etapa1$y_log_ingtot > 0
+r2_etapa1_total     <- r2(db_train_etapa1$y_log_ingtot, db_train_etapa1$y_log_hat)
+r2_etapa1_positivos <- r2(db_train_etapa1$y_log_ingtot[con_ingreso],
+                          db_train_etapa1$y_log_hat[con_ingreso])
+r2_etapa1_total
+r2_etapa1_positivos
+
+# Test: modelo entrenado con todas las personas de train
+ranger_etapa1_full <- fun_ranger_etapa1(db_train_etapa1)
+db_test_etapa1$y_log_hat <- predict(ranger_etapa1_full, data = db_test_etapa1)$predictions
+rm(ranger_etapa1_full); gc()
+
+# --- Etapa 2: ingreso del hogar con la formula del DANE ---
+
+db_train_ingreso <- fun_agregar_ingreso(db_train_etapa1, raw_train_hogares)
+db_test_ingreso  <- fun_agregar_ingreso(db_test_etapa1,  raw_test_hogares)
+
+# --- Bases finales: todos los modelos se estiman sobre estas bases ---
+
+db_train <- db_train |>
+  mutate(id = id_train) |>
+  left_join(db_train_ingreso, by = "id") |>
+  select(-id)
+
+db_test <- db_test |>
+  left_join(db_test_ingreso, by = "id")
+
+# Verificación: no deben quedar NA en los predictores
+sum(is.na(db_train))
+sum(is.na(db_test[, setdiff(names(db_train), "Pobre")]))
 
 
 # MODELO 1: LOGIT ELASTIC NET - SELECCION POR ROC, UMBRAL FIJO 0.5 -------------
@@ -670,9 +908,9 @@ name_logitf1 <- paste0("EN_lambda_", lambda_str_logitf1,
 write.csv(predictSample_logitf1, name_logitf1, row.names = FALSE)
 
 
-################################################################################
-# MODELO 3: LDA - SELECCION POR ROC, UMBRAL FIJO 0.5
-################################################################################
+
+# MODELO 3: LDA - SELECCION POR ROC, UMBRAL FIJO 0.5---------------------------
+
 
 lda_roc <- train(
   Pobre ~ .,
@@ -705,9 +943,8 @@ predictSample_lda_roc <- db_test |>
 write.csv(predictSample_lda_roc, "LDA.csv", row.names = FALSE)
 
 
-################################################################################
-# MODELO 4: LDA - SELECCION POR F1, UMBRAL OPTIMO EN CURVA PR
-################################################################################
+
+# MODELO 4: LDA - SELECCION POR F1, UMBRAL OPTIMO EN CURVA PR------------------
 
 lda_f1 <- train(
   Pobre ~ .,
@@ -768,13 +1005,13 @@ name_ldaf1 <- paste0("LDA_F1_prob_", round(umbral_ldaf1, 3), ".csv")
 write.csv(predictSample_ldaf1, name_ldaf1, row.names = FALSE)
 
 
-################################################################################
-# MODELO 5: QDA - SELECCION POR ROC, UMBRAL FIJO 0.5
-################################################################################
+
+# MODELO 5: QDA - SELECCION POR ROC, UMBRAL FIJO 0.5----------------------------
+
 
 qda_roc <- train(
   Pobre ~ .,
-  data = db_train,
+  data = db_train |> select(-num_privaciones, -Clase),
   method = "qda",
   metric = "ROC",
   trControl = ctrl_roc,
@@ -803,13 +1040,13 @@ predictSample_qda_roc <- db_test |>
 write.csv(predictSample_qda_roc, "QDA.csv", row.names = FALSE)
 
 
-################################################################################
-# MODELO 6: QDA - SELECCION POR F1, UMBRAL OPTIMO EN CURVA PR
-################################################################################
+
+# MODELO 6: QDA - SELECCION POR F1, UMBRAL OPTIMO EN CURVA PR-------------------
+
 
 qda_f1 <- train(
   Pobre ~ .,
-  data = db_train,
+  data = db_train |> select(-num_privaciones, -Clase),
   method = "qda",
   metric = "F",
   trControl = ctrl_f1,
@@ -866,9 +1103,9 @@ name_qdaf1 <- paste0("QDA_F1_prob_", round(umbral_qdaf1, 3), ".csv")
 write.csv(predictSample_qdaf1, name_qdaf1, row.names = FALSE)
 
 
-################################################################################
-# MODELO 7: NAIVE BAYES - SELECCION POR ROC, UMBRAL FIJO 0.5
-################################################################################
+
+# MODELO 7: NAIVE BAYES - SELECCION POR ROC, UMBRAL FIJO 0.5--------------------
+
 
 tune_grid_nb <- expand.grid(
   laplace = 0,
@@ -911,9 +1148,7 @@ predictSample_nb_roc <- db_test |>
 write.csv(predictSample_nb_roc, "NaiveBayes.csv", row.names = FALSE)
 
 
-################################################################################
-# MODELO 8: LOGIT ELASTIC NET CON OVERSAMPLING - UMBRAL FIJO 0.5
-################################################################################
+# MODELO 8: LOGIT ELASTIC NET CON OVERSAMPLING - UMBRAL FIJO 0.5---------------
 
 logit_up05 <- train(
   Pobre ~ .,
@@ -1320,7 +1555,7 @@ predictSample_rff1 <- db_test |>
 
 name_rff1 <- paste0("RandomForest_F1_prob_", round(umbral_rff1, 3), ".csv")
 write.csv(predictSample_rff1, name_rff1, row.names = FALSE)
-# MODELO 15: RANDOM FOREST CON OVERSAMPLING SELECCION POR F, UMBRAL OPTIMO EN CURVA PR
+# MODELO 15: RANDOM FOREST CON OVERSAMPLING SELECCION POR F, UMBRAL OPTIMO EN CURVA PR---
 
 
 set.seed(2026)
@@ -1399,6 +1634,7 @@ rf_up_importancia <- ranger(
 importancia_rf_up <- sort(rf_up_importancia$variable.importance, decreasing = TRUE)
 importancia_rf_up
 
+umbral_rfupf1 <- best_cutoff_rfupf1$threshold
 # Comparación: con/sin rebalanceo, umbral 0.5 vs umbral óptimo PR
 model_comparison_rf_up <- bind_rows(
   tibble(strategy = "RF - ROC - umbral 0.5", threshold = 0.5,
@@ -1421,7 +1657,7 @@ model_comparison_rf_up <- bind_rows(
 
 model_comparison_rf_up
 
-umbral_rfupf1 <- best_cutoff_rfupf1$threshold
+
 
 predictSample_rfupf1 <- db_test |>
   mutate(pobre_prob = predict(rf_up, newdata = db_test, type = "prob")[["Si"]],
@@ -1626,3 +1862,194 @@ predictSample_adaupf1 <- db_test |>
 
 name_adaupf1 <- paste0("AdaBoost_up_F1_prob_", round(umbral_adaupf1, 3), ".csv")
 write.csv(predictSample_adaupf1, name_adaupf1, row.names = FALSE)
+
+# MODELO 19: GRADIENT BOOSTING - SELECCION POR ROC, UMBRAL FIJO 0.5 -------------
+
+grid_gbm <- expand.grid(n.trees = c(100, 200, 500),
+                        interaction.depth = c(1, 3),
+                        shrinkage = c(0.001, 0.01),
+                        n.minobsinnode = c(20, 50))
+
+set.seed(2026)
+gbm_roc <- train(
+  Pobre ~ .,
+  data = db_train,
+  method = "gbm",
+  metric = "ROC",
+  maximize = TRUE,
+  trControl = ctrl_roc,
+  tuneGrid = grid_gbm,
+  verbose = FALSE
+)
+
+gbm_roc
+gbm_roc$bestTune
+
+pred_cv_gbm_roc <- gbm_roc$pred |>
+  filter(n.trees == gbm_roc$bestTune$n.trees,
+         interaction.depth == gbm_roc$bestTune$interaction.depth,
+         shrinkage == gbm_roc$bestTune$shrinkage,
+         n.minobsinnode == gbm_roc$bestTune$n.minobsinnode)
+
+cm_gbm_roc <- confusionMatrix(
+  data = factor(ifelse(pred_cv_gbm_roc$Si >= 0.5, "Si", "No"),
+                levels = levels(pred_cv_gbm_roc$obs)),
+  reference = pred_cv_gbm_roc$obs,
+  positive = "Si",
+  mode = "prec_recall"
+)
+cm_gbm_roc
+
+predictSample_gbm_roc <- db_test |>
+  mutate(pobre_prob = predict(gbm_roc, newdata = db_test, type = "prob")[["Si"]],
+         pobre_lab = ifelse(pobre_prob >= 0.5, "Si", "No"),
+         pobre = if_else(pobre_lab == "Si", 1L, 0L)) |>
+  select(id, pobre)
+
+name_gbm_roc <- paste0("GBM_trees_", gbm_roc$bestTune$n.trees,
+                       "_depth_", gbm_roc$bestTune$interaction.depth,
+                       "_shrink_", gbm_roc$bestTune$shrinkage,
+                       "_minobs_", gbm_roc$bestTune$n.minobsinnode, ".csv")
+write.csv(predictSample_gbm_roc, name_gbm_roc, row.names = FALSE)
+
+
+# MODELO 20: GRADIENT BOOSTING - SELECCION POR F, UMBRAL OPTIMO EN CURVA PR -----
+
+set.seed(2026)
+gbm_f1 <- train(
+  Pobre ~ .,
+  data = db_train,
+  method = "gbm",
+  metric = "F",
+  maximize = TRUE,
+  trControl = ctrl_f1,
+  tuneGrid = grid_gbm,
+  verbose = FALSE
+)
+
+gbm_f1
+gbm_f1$bestTune
+
+pred_cv_gbm_f1 <- gbm_f1$pred |>
+  filter(n.trees == gbm_f1$bestTune$n.trees,
+         interaction.depth == gbm_f1$bestTune$interaction.depth,
+         shrinkage == gbm_f1$bestTune$shrinkage,
+         n.minobsinnode == gbm_f1$bestTune$n.minobsinnode)
+
+# Calibramos el umbral de clasificación maximizando F1 en la curva PR.
+
+roc_gbmf1 <- pROC::roc(
+  response  = pred_cv_gbm_f1$obs,
+  predictor = pred_cv_gbm_f1$Si,
+  levels = c("No", "Si"),
+  direction = "<"
+)
+
+pr_cutoffs_gbmf1 <- data.frame(pROC::coords(
+  roc = roc_gbmf1,
+  x = seq(0, 1, length = 100),
+  ret = c('threshold', 'precision', 'recall')
+)) |>
+  mutate(F1 = (2 * precision * recall) / (precision + recall))
+
+best_cutoff_gbmf1 <- pr_cutoffs_gbmf1 |> slice_max(F1, n = 1)
+best_cutoff_gbmf1
+
+cm_gbmf1_pr <- confusionMatrix(
+  data = factor(ifelse(pred_cv_gbm_f1$Si >= best_cutoff_gbmf1$threshold, "Si", "No"),
+                levels = levels(pred_cv_gbm_f1$obs)),
+  reference = pred_cv_gbm_f1$obs,
+  positive = "Si",
+  mode = "prec_recall"
+)
+cm_gbmf1_pr
+
+umbral_gbmf1 <- best_cutoff_gbmf1$threshold
+
+predictSample_gbmf1 <- db_test |>
+  mutate(pobre_prob = predict(gbm_f1, newdata = db_test, type = "prob")[["Si"]],
+         pobre_lab = ifelse(pobre_prob >= umbral_gbmf1, "Si", "No"),
+         pobre = if_else(pobre_lab == "Si", 1L, 0L)) |>
+  select(id, pobre)
+
+name_gbmf1 <- paste0("GBM_F1_trees_", gbm_f1$bestTune$n.trees,
+                     "_depth_", gbm_f1$bestTune$interaction.depth,
+                     "_shrink_", gbm_f1$bestTune$shrinkage,
+                     "_prob_", round(umbral_gbmf1, 3), ".csv")
+write.csv(predictSample_gbmf1, name_gbmf1, row.names = FALSE)
+
+
+# MODELO 21: GRADIENT BOOSTING CON OVERSAMPLING - SELECCION POR F, UMBRAL PR ----
+
+set.seed(2026)
+gbm_upF <- train(
+  Pobre ~ .,
+  data = db_train,
+  method = "gbm",
+  metric = "F",
+  maximize = TRUE,
+  trControl = ctrl_up_f1,
+  tuneGrid = grid_gbm,
+  verbose = FALSE
+)
+
+gbm_upF
+gbm_upF$bestTune
+
+pred_cv_gbm_up <- gbm_upF$pred |>
+  filter(n.trees == gbm_upF$bestTune$n.trees,
+         interaction.depth == gbm_upF$bestTune$interaction.depth,
+         shrinkage == gbm_upF$bestTune$shrinkage,
+         n.minobsinnode == gbm_upF$bestTune$n.minobsinnode)
+
+# Verificación de colapso: sd(Si) debe ser claramente mayor que 0
+summary(pred_cv_gbm_up$Si)
+sd(pred_cv_gbm_up$Si)
+
+roc_gbmupF <- pROC::roc(
+  response  = pred_cv_gbm_up$obs,
+  predictor = pred_cv_gbm_up$Si,
+  levels = c("No", "Si"),
+  direction = "<"
+)
+
+pr_cutoffs_gbmupF <- data.frame(pROC::coords(
+  roc = roc_gbmupF,
+  x = seq(0, 1, length = 100),
+  ret = c('threshold', 'precision', 'recall')
+)) |>
+  mutate(F1 = (2 * precision * recall) / (precision + recall))
+
+best_cutoff_gbmupF <- pr_cutoffs_gbmupF |> slice_max(F1, n = 1)
+best_cutoff_gbmupF
+
+cm_gbmup05 <- confusionMatrix(
+  data = factor(ifelse(pred_cv_gbm_up$Si >= 0.5, "Si", "No"),
+                levels = levels(pred_cv_gbm_up$obs)),
+  reference = pred_cv_gbm_up$obs,
+  positive = "Si",
+  mode = "prec_recall"
+)
+
+cm_gbmupF_pr <- confusionMatrix(
+  data = factor(ifelse(pred_cv_gbm_up$Si >= best_cutoff_gbmupF$threshold, "Si", "No"),
+                levels = levels(pred_cv_gbm_up$obs)),
+  reference = pred_cv_gbm_up$obs,
+  positive = "Si",
+  mode = "prec_recall"
+)
+cm_gbmupF_pr
+
+umbral_gbmupF <- best_cutoff_gbmupF$threshold
+
+predictSample_gbmupF <- db_test |>
+  mutate(pobre_prob = predict(gbm_upF, newdata = db_test, type = "prob")[["Si"]],
+         pobre_lab = ifelse(pobre_prob >= umbral_gbmupF, "Si", "No"),
+         pobre = if_else(pobre_lab == "Si", 1L, 0L)) |>
+  select(id, pobre)
+
+name_gbmupF <- paste0("GBM_up_F1_trees_", gbm_upF$bestTune$n.trees,
+                      "_depth_", gbm_upF$bestTune$interaction.depth,
+                      "_shrink_", gbm_upF$bestTune$shrinkage,
+                      "_prob_", round(umbral_gbmupF, 3), ".csv")
+write.csv(predictSample_gbmupF, name_gbmupF, row.names = FALSE)
