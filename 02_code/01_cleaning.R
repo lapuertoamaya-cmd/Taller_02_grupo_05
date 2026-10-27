@@ -606,7 +606,6 @@ stopifnot(identical(train_clean$id, db_train_hogares$id),
 
 # CSV para inspeccion. Al leerlos de nuevo los factores quedan como texto;
 # los scripts siguientes usan los objetos en memoria creados por main.R.
-dir_clean <- file.path(root, "01_data", "02_clean")
 dir.create(dir_clean, recursive = TRUE, showWarnings = FALSE)
 write_csv(train_clean, file.path(dir_clean, "train_clean.csv"))
 write_csv(test_clean, file.path(dir_clean, "test_clean.csv"))

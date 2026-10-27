@@ -1,5 +1,5 @@
 # ------------------------------------------------------------------------------
-# Archivo: 00_set_up.R
+# Archivo: 00_setup.R
 # Proyecto: Taller 2 - Big Data y Machine Learning
 #
 # Descripcion:
@@ -32,6 +32,7 @@ p_load(
   tidyverse,     # Lectura de CSV, limpieza, agregacion, uniones y graficos.
   readxl,        # Lectura de los archivos Excel de documentacion.
   writexl,       # Exportacion de tablas descriptivas a Excel.
+  Matrix,        # Matrices dispersas para la ecuacion de ingreso.
 
   # (2.2) Entrenamiento y modelos
   stats,         # lm() y glm(): modelo lineal, logit y probit (incluido en R).
