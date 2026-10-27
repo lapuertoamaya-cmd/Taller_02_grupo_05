@@ -1300,7 +1300,7 @@ name_gbm_roc <- paste0("GBM_trees_", gbm_roc$bestTune$n.trees,
 write.csv(predictSample_gbm_roc, name_gbm_roc, row.names = FALSE)
 
 
-# MODELO 20: GRADIENT BOOSTING - SELECCION POR F, UMBRAL OPTIMO EN CURVA PR -----
+# MODELO 20: GRADIENT BOOSTING - SELECCION POR F, UMBRAL OPTIMO EN CURVA PR-----
 
 set.seed(2026)
 gbm_f1 <- train(
@@ -1366,7 +1366,7 @@ name_gbmf1 <- paste0("GBM_F1_trees_", gbm_f1$bestTune$n.trees,
 write.csv(predictSample_gbmf1, name_gbmf1, row.names = FALSE)
 
 
-# MODELO 21: GRADIENT BOOSTING CON OVERSAMPLING - SELECCION POR F, UMBRAL PR ----
+# MODELO 21: GRADIENT BOOSTING CON OVERSAMPLING - SELECCION POR F, UMBRAL PR----
 
 set.seed(2026)
 gbm_upF <- train(
@@ -1465,7 +1465,7 @@ write.csv(predictSample_gbmupF, name_gbmupF, row.names = FALSE)
 #
 
 
-# 22-27.1 MATRIZ DE PREDICTORES Y FUNCIONES COMUNES ---------------------------------
+# 22-27.1 MATRIZ DE PREDICTORES Y FUNCIONES COMUNES ----------------------------
 
 # xgboost y lightgbm exigen una matriz numerica: los factores se codifican
 # como indicadoras. La formula no incluye Pobre para aplicarla tambien a test.
@@ -1641,7 +1641,7 @@ fun_fila_cm <- function(.cm, .strategy, .threshold) {
 }
 
 
-# 22-27.2 GRILLAS -------------------------------------------------------------------
+# 22-27.2 GRILLAS --------------------------------------------------------------
 
 grid_xgb <- expand.grid(nrounds = 700,
                         max_depth = c(4, 6),
@@ -1660,7 +1660,7 @@ grid_lgbm <- tibble(
 )
 
 
-# 22-27.3 VALIDACION CRUZADA --------------------------------------------------------
+# 22-27.3 VALIDACION CRUZADA ---------------------------------------------------
 
 # Sin rebalanceo: comun a los modelos por ROC y por F
 cv_xgb  <- fun_cv_boost(grid_xgb,  "xgb")
@@ -1676,7 +1676,7 @@ cv_xgb_up$resultados
 cv_lgbm_up$resultados
 
 
-# MODELO 22: XGBOOST - SELECCION POR ROC, UMBRAL FIJO 0.5 ---------------------
+# MODELO 22: XGBOOST - SELECCION POR ROC, UMBRAL FIJO 0.5 ----------------------
 
 best_tune_xgb_roc <- cv_xgb$resultados |> slice_max(ROC, n = 1, with_ties = FALSE)
 best_tune_xgb_roc
