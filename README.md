@@ -14,9 +14,9 @@ Big Data y Machine Learning — Universidad de los Andes, 2026-2. Grupo 05.
 
 ## Autores
 
-- Laura Alejandra Puerto Amaya — *(código de estudiante)*
-- *(nombre y código del segundo integrante)*
-- *(nombre y código del tercer integrante)*
+- Laura Alejandra Puerto Amaya — *202312335*
+- Miguel Hernando Torres *(nombre y código del segundo integrante)*
+- Angel Esteban Bonilla Escamilla *202424426*
 
 ## Estructura del proyecto
 
@@ -27,6 +27,7 @@ Taller_02_grupo_05/
 │   ├── 02_clean/
 │   └── 03_features/
 ├── 02_code/
+├── 03_outputs/
 ├── 04_documentation/
 ├── main.R
 └── README.md
