@@ -5,8 +5,9 @@
 # Descripcion:
 #   Importar las cuatro bases y procesar hogares y personas.
 #   Construir variables individuales, agregar personas, unir y procesar hogares.
-#   Estimar ingreso individual con random forest sobre las variables originales,
-#   y construir ingreso UG, per capita y relativo a la linea de pobreza.
+#   Version unificada: integra la construccion de 01_cleaning.R con las
+#   variables de vivienda y privaciones del script de modelos, y corrige los
+#   codigos 98/99 (no sabe / no responde) en los montos de la vivienda.
 # Input:
 #   train_hogares.csv, train_personas.csv, test_hogares.csv y test_personas.csv
 #   en 01_data/01_raw/. Paquetes y dir_datos_raw preparados por main.R.
@@ -15,9 +16,8 @@
 #   Hogares: tamanio, vivienda, arriendo, amortizacion y pobre (solo en train).
 #   Personas: identificadores, educacion, actividad, condiciones laborales,
 #   proteccion social y recepcion de pagos.
-#   train_clean y test_clean; archivos CSV en 01_data/02_clean/.
-#   03_outputs/ingreso_personas/modelo_ingreso.rds: bosque, esquema de entradas,
-#   folds por hogar y predicciones de train.
+#   train_clean y test_clean listas para modelar (tipos definidos, sin NA y
+#   Pobre como factor No/Si en train); archivos CSV en 01_data/02_clean/.
 # ------------------------------------------------------------------------------
 
 
@@ -25,20 +25,28 @@
 # (1) Importar las bases originales
 # ------------------------------------------------------------------------------
 
+# read_csv adivina el tipo de cada columna con las primeras filas. Columnas
+# casi vacias al inicio (Imdies, Iof1es) se leian como logicas y sus montos
+# quedaban en NA; guess_max = Inf obliga a revisar todas las filas.
+
 # (1.1) Entrenamiento
 db_train_hogares <- read_csv(
-  file.path(dir_datos_raw, "train_hogares.csv"), show_col_types = FALSE
+  file.path(dir_datos_raw, "train_hogares.csv"), show_col_types = FALSE,
+  guess_max = Inf
 )
 db_train_personas <- read_csv(
-  file.path(dir_datos_raw, "train_personas.csv"), show_col_types = FALSE
+  file.path(dir_datos_raw, "train_personas.csv"), show_col_types = FALSE,
+  guess_max = Inf
 )
 
 # (1.2) Test
 db_test_hogares <- read_csv(
-  file.path(dir_datos_raw, "test_hogares.csv"), show_col_types = FALSE
+  file.path(dir_datos_raw, "test_hogares.csv"), show_col_types = FALSE,
+  guess_max = Inf
 )
 db_test_personas <- read_csv(
-  file.path(dir_datos_raw, "test_personas.csv"), show_col_types = FALSE
+  file.path(dir_datos_raw, "test_personas.csv"), show_col_types = FALSE,
+  guess_max = Inf
 )
 
 
@@ -64,26 +72,30 @@ fun_preprocess_hogares <- function(.db) {
       # p5090: 1 = propia totalmente pagada; 2 = propia que estan pagando.
       bin_casa_propia_pagada = as.integer(tenencia_vivienda == 1),
       bin_paga_amortizacion = as.integer(tenencia_vivienda == 2),
+      # Tenencia como categoria (seis opciones de la encuesta).
+      cat_tenencia = factor(tenencia_vivienda, levels = 1:6,
+                            labels = c("Propia_pagada", "Propia_pagando",
+                                       "Arriendo", "Usufructo",
+                                       "Posesion_sin_titulo", "Otra")),
       # Distingue arriendo estimado del pago efectivo; no indica propiedad.
       bin_arriendo_imput = as.integer(!is.na(p5130)),
       # p5130 y p5140 son excluyentes: cada hogar responde solo una.
       # No sustituir por cero si, inesperadamente, faltan ambas respuestas.
       arriendo = coalesce(p5140, p5130),
+      # 98 y 99 son codigos de no sabe / no responde, no montos en pesos.
+      bin_arriendo_nsnr = as.integer(arriendo %in% c(98, 99)),
+      arriendo = if_else(arriendo %in% c(98, 99), NA_real_, arriendo),
       log_arriendo = log1p(arriendo),
       # Quien no paga cuota aporta cero. Si esta pagando y falta el monto,
       # conservar NA: monto desconocido no equivale a ausencia de pago.
-      cuota_amortizacion = if_else(
-        tenencia_vivienda != 2 & is.na(cuota_amortizacion), 0, cuota_amortizacion
+      # Los codigos 98 y 99 tambien se tratan como monto desconocido.
+      bin_cuota_nsnr = as.integer(cuota_amortizacion %in% c(98, 99)),
+      cuota_amortizacion = case_when(
+        cuota_amortizacion %in% c(98, 99) ~ NA_real_,
+        tenencia_vivienda != 2 & is.na(cuota_amortizacion) ~ 0,
+        TRUE ~ cuota_amortizacion
       ),
-      log_amortizacion = log1p(cuota_amortizacion),
-      # Componente del ingreso, NO pago efectivo de arriendo: se agrega una
-      # sola vez por hogar tras sumar personas. Regla del Codigo Taller 2:
-      # 1 = propia pagada, 4 = usufructo; 98/99 no son montos utilizables.
-      # Es una aproximacion de Ingpcug, no una replica exacta de todos sus ajustes.
-      arriendo_imputado_ingreso = if_else(
-        tenencia_vivienda %in% c(1, 4) & !(p5130 %in% c(98, 99)),
-        replace_na(p5130, 0), 0
-      )
+      log_amortizacion = log1p(cuota_amortizacion)
     ) |>
     # (2.1.3) Seleccionar explicitamente las variables que conservamos
     # Dominio/depto son categorias geograficas; lp es la linea de pobreza.
@@ -92,34 +104,20 @@ fun_preprocess_hogares <- function(.db) {
     # pobre existe solo en train; se conserva como variable objetivo.
     select(
       id, clase, dominio, depto, lp, num_personas, num_personas_ug,
-      num_cuartos, num_cuartos_dormir, tenencia_vivienda, bin_casa_propia_pagada,
-      bin_paga_amortizacion, bin_arriendo_imput,
-      arriendo, log_arriendo, cuota_amortizacion, log_amortizacion,
-      arriendo_imputado_ingreso,
+      num_cuartos, num_cuartos_dormir, tenencia_vivienda, cat_tenencia,
+      bin_casa_propia_pagada, bin_paga_amortizacion, bin_arriendo_imput,
+      arriendo, log_arriendo, bin_arriendo_nsnr,
+      cuota_amortizacion, log_amortizacion, bin_cuota_nsnr,
       any_of("pobre")
     )
 }
 
 
 # (2.2) Procesar personas
-procesar_personas <- function(base, ingresos) {
-  #' Procesar personas y adjuntar ingreso individual predicho.
-  #'
-  #' @description Los predictores laborales/educativos se procesan aqui, pero
-  #' ingreso_predicho se estima ANTES y en otra rama, usando las columnas RAW.
-  #' El bosque predice log(1 + Ingtot) en PET; su salida se transforma a pesos
-  #' con max(exp(prediccion) - 1, 0). No PET recibe cero, como el codigo original.
-  #' En train las personas heredan el fold del hogar: ningun miembro de ese
-  #' hogar participa en el bosque que genera su propia prediccion de ingreso.
-  #' Fuera de muestra no equivale a validacion anidada de toda la cadena.
-  #'
-  #' @param base Base original de personas, sin eliminar predictores de ingreso.
-  #' @param ingresos Tabla id, id_persona, ingreso_predicho de generar_ingreso_personas.
-  #' @returns Personas procesadas con ingreso_predicho mensual individual en pesos.
+procesar_personas <- function(base) {
   base |>
     # (2.2.1) Pasar nombres a minusculas y reunir los renombrados
     rename_with(tolower) |>
-    left_join(ingresos, by = c("id", "orden" = "id_persona")) |>
     rename(
       id_persona = orden,
       edad = p6040,
@@ -173,22 +171,6 @@ procesar_personas <- function(base, ingresos) {
         p6210 == 6 ~ 11 + p6210s1,
         TRUE ~ NA_real_
       ),
-      # Version historica SOLO para comparar con el Codigo Taller 2.
-      # No reemplaza anios_educ: aqui desconocido se vuelve "ninguno" y se
-      # aplican los topes/sumas del borrador, aun cuando difieren de nuestra regla.
-      nivel_educativo_viejo = factor(
-        if_else(is.na(p6210) | p6210 == 9, 1, p6210), levels = 1:6,
-        ordered = TRUE, labels = c("Ninguno", "Preescolar", "Primaria",
-                                   "Secundaria", "Media", "Universitaria")
-      ),
-      anios_educ_viejo = case_when(
-        is.na(p6210) | p6210 %in% c(1, 2, 9) ~ 0,
-        p6210 == 3 ~ pmin(replace_na(p6210s1, 0), 5),
-        p6210 == 4 ~ 5 + pmin(replace_na(p6210s1, 0), 4),
-        p6210 == 5 ~ 9 + pmin(replace_na(p6210s1, 0), 2),
-        p6210 == 6 ~ 11 + pmin(replace_na(p6210s1, 0), 6),
-        TRUE ~ 0
-      ),
       # Conservar el nivel como categoria para posibles usos posteriores.
       nivel_educativo = factor(
         p6210, levels = 1:6, ordered = TRUE,
@@ -208,18 +190,8 @@ procesar_personas <- function(base, ingresos) {
       ),
       # Jefatura y actividad: Pet/Oc/Des/Ina contienen solo 1 o NA.
       bin_jefe_hogar = as.integer(parentesco_hogar == 1),
-      # PET oficial DANE: autoridad para este proyecto, no redefinir por edad.
       bin_pet = as.integer(!is.na(pet)),
       bin_ocupado = as.integer(!is.na(oc)),
-      # Sin ocupacion actual, horas de ese empleo = cero. Si esta ocupado y
-      # no informa horas, conservar NA: no equivale a trabajar cero horas.
-      horas_laborales = if_else(bin_ocupado == 0, 0, horas_laborales),
-      # Oficio es nominal. Separar no ocupado de ocupado sin respuesta.
-      oficio = case_when(
-        bin_ocupado == 0 ~ "No_ocupado",
-        is.na(oficio) ~ "Desconocido",
-        TRUE ~ as.character(oficio)
-      ),
       bin_desocupado = as.integer(!is.na(des)),
       bin_inactivo = as.integer(!is.na(ina)),
       bin_menor6 = as.integer(edad < 6),
@@ -248,6 +220,9 @@ procesar_personas <- function(base, ingresos) {
         cotiza_pension %in% c(2, 3) ~ 0L,
         TRUE ~ NA_integer_
       ),
+      # Privacion de empleo informal del IPM (DANE, 2014): ocupado que no
+      # cotiza a pension. Los pensionados (cotiza_pension = 3) no se privan.
+      bin_informal_ipm = as.integer(bin_ocupado == 1 & !(cotiza_pension %in% c(1, 3))),
       # Proxy acordada, solo para ocupados: sin cotizacion a pension Y
       # (sin afiliacion a salud O en regimen subsidiado).
       # Excluir regimen especial y pensionados; no imputar desconocidos.
@@ -343,7 +318,6 @@ procesar_personas <- function(base, ingresos) {
       # Indice del borrador: numero de siete pagos laborales recibidos.
       # No es su monto; no sabe/no informa permanece desconocido.
       num_beneficios_laborales = case_when(
-        bin_ocupado == 0 ~ 0,
         if_any(c(pago_horas_extra, pago_primas, pago_bonificaciones,
                  subsidio_alimentos, subsidio_transporte, subsidio_familiar,
                  subsidio_educativo), ~ .x == 9) ~ NA_real_,
@@ -355,17 +329,15 @@ procesar_personas <- function(base, ingresos) {
     ) |>
     # (2.2.3) Seleccionar las variables que se conservaran
     # Los campos sin prefijo bin_ conservan los codigos de la encuesta.
-    # Nuevos agregados y las demas decisiones pendientes se revisaran despues.
     select(
-      id, id_persona, ingreso_predicho, edad, sexo, parentesco_hogar, oficio, anios_educ,
-      nivel_educativo, nivel_educativo_viejo, anios_educ_viejo,
-      bin_educacion_superior, bin_educacion_primaria,
+      id, id_persona, edad, sexo, parentesco_hogar, anios_educ,
+      nivel_educativo, bin_educacion_superior, bin_educacion_primaria,
       bin_jefe_hogar, bin_pet, bin_ocupado, bin_desocupado, bin_inactivo,
       bin_menor6, bin_menor18, bin_mayor65,
       bin_afiliado_salud, regimen_salud, bin_salud_subsidiada,
       bin_salud_no_contributiva,
       tipo_ocupacion, cotiza_pension, bin_cotiza_pension,
-      bin_informal, bin_trabajador_vulnerable,
+      bin_informal, bin_informal_ipm, bin_trabajador_vulnerable,
       horas_laborales, tamanio_firma,
       bin_segundo_trabajo, horas_segundo_trabajo, tipo_seg_ocupacion,
       mas_horas_trabajo,
@@ -396,43 +368,11 @@ hay_alguno <- function(x) {
 
 # (2.4) Agregar personas: resumenes y conteos, aun sin denominadores del hogar
 agregar_personas_hogar <- function(personas) {
-  #' Agregar integrantes de la unidad de gasto, incluido su ingreso predicho.
-  #'
-  #' @description num_ing_ug_hat suma ingresos individuales predichos en pesos.
-  #' Se excluyen parentescos 6 (servicio domestico y parientes), 7 (pensionistas
-  #' que pagan alojamiento, NO jubilados) y 8 (trabajadores del negocio del hogar
-  #' que no comparten la unidad de gasto). NO se excluye a los ocupados en general:
-  #' hijos, pareja o jefe que trabajan siguen incluidos si pertenecen a la UG.
-  #' El arriendo imputado NO se suma por persona: se incorpora despues de unir
-  #' hogares, una vez por hogar, al construir el ingreso per capita.
-  #'
-  #' @param personas Personas procesadas con ingreso_predicho generado previamente.
-  #' @returns Una fila por hogar con num_ing_ug_hat y los otros agregados de personas.
   personas <- rename_with(personas, tolower)
   # La edad promedio incluye a TODOS los integrantes, como se solicito.
   edad_hogar <- personas |>
     group_by(id) |>
     summarise(edad_promedio = promedio_observado(edad), .groups = "drop")
-
-  # Agregados educativos historicos sobre TODOS los residentes, como el original.
-  # Versiones actuales mantienen la definicion y el universo de unidad de gasto.
-  educacion_vieja_hogar <- personas |>
-    group_by(id) |>
-    summarise(
-      nivel_educativo_max_viejo = max(nivel_educativo_viejo, na.rm = TRUE),
-      anios_educ_max_viejo = max(anios_educ_viejo, na.rm = TRUE),
-      anios_educ_jefe_viejo = max(anios_educ_viejo * bin_jefe_hogar, na.rm = TRUE),
-      anios_educ_promedio_pet_viejo = replace_na(
-        mean(anios_educ_viejo[bin_pet == 1], na.rm = TRUE), 0),
-      prop_superior_pet_viejo = replace_na(
-        sum((nivel_educativo_viejo == "Universitaria") * bin_pet, na.rm = TRUE) /
-          na_if(sum(bin_pet, na.rm = TRUE), 0), 0),
-      bin_bajo_logro_educ_viejo = if (sum(edad >= 15, na.rm = TRUE) == 0) 1L else
-        as.integer(mean(anios_educ_viejo[edad >= 15], na.rm = TRUE) < 9),
-      bin_rezago_escolar_viejo = as.integer(any(
-        between(edad, 7, 17) & anios_educ_viejo < edad - 6, na.rm = TRUE)),
-      .groups = "drop"
-    )
 
   personas |>
     # Las demas agregaciones usan integrantes de la unidad de gasto.
@@ -442,11 +382,10 @@ agregar_personas_hogar <- function(personas) {
     summarise(
       # (2.4.1) Composicion y capacidad laboral
       num_pet_ug = sum(bin_pet),
-      num_ing_ug_hat = sum(ingreso_predicho),
       num_ocupados_ug = sum(bin_ocupado),
       num_inactivos_ug = sum(bin_inactivo),
       num_desocupados_ug = sum(bin_desocupado),
-      num_pensionistas_ug = sum(bin_pensionista[edad >= 10]),
+      num_pensionistas_ug = sum(bin_pensionista[edad >= 10], na.rm = TRUE),
       num_menores6 = sum(edad < 6),
       num_menores10 = sum(edad < 10),
       num_menores18 = sum(edad < 18),
@@ -455,12 +394,6 @@ agregar_personas_hogar <- function(personas) {
       bin_sin_ocupados = as.integer(num_ocupados_ug == 0),
       # (2.4.2) Jefatura y educacion
       bin_jefe_mujer = as.integer(sexo[bin_jefe_hogar == 1][1] == 2),
-      oficio_jefe = oficio[parentesco_hogar == 1][1],
-      # Sin pareja no es no ocupado. Multiples parejas con oficios distintos
-      # dejan NA; no seleccionar arbitrariamente una de las personas.
-      oficio_pareja = if (!any(parentesco_hogar == 2)) "Sin_pareja" else
-        if (n_distinct(oficio[parentesco_hogar == 2]) == 1)
-          oficio[parentesco_hogar == 2][1] else NA_character_,
       anios_educ_jefe = anios_educ[bin_jefe_hogar == 1][1],
       # Pareja = suma de jefe y conyuge. Sin conyuge, sumar cero.
       # Con educacion desconocida de alguno, conservar NA.
@@ -468,28 +401,24 @@ agregar_personas_hogar <- function(personas) {
       anios_educ_max = maximo_observado(anios_educ),
       anios_educ_promedio_pet = promedio_observado(anios_educ[bin_pet == 1]),
       nivel_educativo_max = maximo_observado(as.integer(nivel_educativo)),
-      num_superior_pet = sum(bin_educacion_superior[bin_pet == 1]),
+      num_superior_pet = sum(bin_educacion_superior[bin_pet == 1], na.rm = TRUE),
       bin_jefe_educacion_superior = bin_educacion_superior[bin_jefe_hogar == 1][1],
       # (2.4.3) Calidad del empleo: denominadores se aplican postunion
       bin_jefe_informal = bin_informal[bin_jefe_hogar == 1][1],
       bin_jefe_vulnerable = bin_trabajador_vulnerable[bin_jefe_hogar == 1][1],
       bin_jefe_segundo_trabajo = bin_segundo_trabajo[bin_jefe_hogar == 1][1],
       bin_jefe_subsidio_transporte = bin_subsidio_transporte[bin_jefe_hogar == 1][1],
-      num_informales = sum(bin_informal[bin_ocupado == 1]),
-      num_vulnerables = sum(bin_trabajador_vulnerable[bin_ocupado == 1]),
-      num_segundo_trabajo = sum(bin_segundo_trabajo[bin_ocupado == 1]),
-      num_cotizantes = sum(bin_cotiza_pension[bin_ocupado == 1]),
+      num_informales = sum(bin_informal[bin_ocupado == 1], na.rm = TRUE),
+      num_vulnerables = sum(bin_trabajador_vulnerable[bin_ocupado == 1], na.rm = TRUE),
+      num_segundo_trabajo = sum(bin_segundo_trabajo[bin_ocupado == 1], na.rm = TRUE),
+      num_cotizantes = sum(bin_cotiza_pension[bin_ocupado == 1], na.rm = TRUE),
       num_asalariados = sum(tipo_ocupacion[bin_ocupado == 1] %in% c(1, 2)),
       num_cuenta_propia = sum(tipo_ocupacion[bin_ocupado == 1] %in% 4),
       num_domesticos = sum(tipo_ocupacion[bin_ocupado == 1] %in% 3),
       num_jornaleros = sum(tipo_ocupacion[bin_ocupado == 1] %in% 8),
       num_mujeres_ocupadas = sum(sexo[bin_ocupado == 1] == 2),
-      # Convencion aprobada: sin ocupados, promedio cero y bin_sin_ocupados=1.
-      # Con ocupados pero todos sus datos desconocidos, conservar NA.
-      horas_promedio_ocupados = if (num_ocupados_ug == 0) 0 else
-        promedio_observado(horas_laborales[bin_ocupado == 1]),
-      beneficios_promedio_ocupados = if (num_ocupados_ug == 0) 0 else
-        promedio_observado(num_beneficios_laborales[bin_ocupado == 1]),
+      horas_promedio_ocupados = promedio_observado(horas_laborales[bin_ocupado == 1]),
+      beneficios_promedio_ocupados = promedio_observado(num_beneficios_laborales[bin_ocupado == 1]),
       # Deseo de mas horas no es toda la definicion oficial de subempleo.
       bin_desea_mas_horas = hay_alguno(case_when(
         mas_horas_trabajo[bin_ocupado == 1] == 1 ~ 1L,
@@ -503,21 +432,22 @@ agregar_personas_hogar <- function(personas) {
       bin_hay_subsidios = hay_alguno(bin_subsidios[edad >= 10]),
       bin_hay_ayuda = hay_alguno(bin_ayuda_instituciones[edad >= 10]),
       bin_hay_pension = hay_alguno(bin_pensionista[edad >= 10]),
+      bin_hay_rentas_pensiones = hay_alguno(bin_rentas_pensiones[edad >= 10]),
       # Salud: proporciones entre respuestas observadas, no NA como negativos
       pct_salud_subsidiada = 100 * promedio_observado(bin_salud_subsidiada),
       pct_salud_no_contributiva = 100 * promedio_observado(bin_salud_no_contributiva),
       pct_sin_salud = 100 * promedio_observado(1 - bin_afiliado_salud),
-      # (2.4.5) Proxies de privaciones del borrador; no constituyen el IPM oficial
+      # (2.4.5) Proxies de privaciones del IPM (DANE, 2014); no es el IPM oficial
       bin_bajo_logro_educ = if (sum(edad >= 15) == 0) 1L else
-        as.integer(mean(anios_educ[edad >= 15]) < 9),
+        as.integer(promedio_observado(anios_educ[edad >= 15]) < 9),
       bin_rezago_escolar = hay_alguno(as.integer(
         anios_educ[edad >= 7 & edad <= 17] < edad[edad >= 7 & edad <= 17] - 6
       )),
       bin_trabajo_infantil = hay_alguno(bin_ocupado[edad >= 12 & edad <= 17]),
+      bin_empleo_informal_ipm = as.integer(any(bin_informal_ipm == 1)),
       .groups = "drop"
     ) |>
-    left_join(edad_hogar, by = "id") |>
-    left_join(educacion_vieja_hogar, by = "id")
+    left_join(edad_hogar, by = "id")
 }
 
 
@@ -529,26 +459,11 @@ unir_bases <- function(hogares, personas_hogar) {
 }
 
 
-# (2.6) Postunion: porcentajes, dependencia y vivienda
+# (2.6) Postunion: porcentajes, dependencia, vivienda y privaciones
 procesar_postunion <- function(.db) {
-  #' Construir razones y el ingreso per capita predicho despues de unir hogares.
-  #'
-  #' @description num_ing_pc_hat = (num_ing_ug_hat + arriendo imputado) / Npersug.
-  #' El arriendo se suma UNA vez, solo para tenencia 1/4 y sin codigos 98/99.
-  #' Se replica el denominador pmax(Npersug, 1) del codigo de referencia.
-  #' num_ratio_lp_hat = num_ing_pc_hat / lp: ingreso estimado relativo al umbral,
-  #' no su inversa; valores menores de 1 sugieren ingreso inferior a la linea.
-  #' Son predictores generados, no ingresos observados ni decisiones de pobreza.
-  #'
-  #' @param .db Hogares unidos con num_ing_ug_hat, lp, num_personas_ug y arriendo.
-  #' @returns Hogares con las tres variables de ingreso; elimina el componente
-  #' temporal arriendo_imputado_ingreso para no duplicarlo en la base final.
   .db |>
     rename_with(tolower) |>
     mutate(
-      num_ing_pc_hat = (num_ing_ug_hat + arriendo_imputado_ingreso) /
-        pmax(num_personas_ug, 1),
-      num_ratio_lp_hat = num_ing_pc_hat / lp,
       # Porcentajes 0-100 sobre la unidad de gasto, no sobre PET ni PEA.
       pct_pet = 100 * num_pet_ug / na_if(num_personas_ug, 0),
       pct_desocupados = 100 * num_desocupados_ug / na_if(num_personas_ug, 0),
@@ -560,26 +475,16 @@ procesar_postunion <- function(.db) {
       # Es una proxy de fuentes de ingreso, no un porcentaje de personas unicas.
       pct_personas_ingreso = 100 * (num_ocupados_ug + num_pensionistas_ug) /
         na_if(num_personas_ug, 0),
-      # Sobre ocupados: cero si no los hay (convencion predictiva aprobada),
-      # distinguiendo ese caso con bin_sin_ocupados. Otros desconocidos siguen NA.
-      pct_segundo_trabajo = if_else(num_ocupados_ug == 0, 0,
-        100 * num_segundo_trabajo / na_if(num_ocupados_ug, 0)),
-      pct_trabajadores_vulnerables = if_else(num_ocupados_ug == 0, 0,
-        100 * num_vulnerables / na_if(num_ocupados_ug, 0)),
-      pct_informales = if_else(num_ocupados_ug == 0, 0,
-        100 * num_informales / na_if(num_ocupados_ug, 0)),
-      pct_cotizantes = if_else(num_ocupados_ug == 0, 0,
-        100 * num_cotizantes / na_if(num_ocupados_ug, 0)),
-      pct_asalariados = if_else(num_ocupados_ug == 0, 0,
-        100 * num_asalariados / na_if(num_ocupados_ug, 0)),
-      pct_cuenta_propia = if_else(num_ocupados_ug == 0, 0,
-        100 * num_cuenta_propia / na_if(num_ocupados_ug, 0)),
-      pct_domesticos = if_else(num_ocupados_ug == 0, 0,
-        100 * num_domesticos / na_if(num_ocupados_ug, 0)),
-      pct_jornaleros = if_else(num_ocupados_ug == 0, 0,
-        100 * num_jornaleros / na_if(num_ocupados_ug, 0)),
-      pct_mujeres_ocupadas = if_else(num_ocupados_ug == 0, 0,
-        100 * num_mujeres_ocupadas / na_if(num_ocupados_ug, 0)),
+      # Sobre ocupados; sin ocupados, porcentaje no definido (NA), no cero.
+      pct_segundo_trabajo = 100 * num_segundo_trabajo / na_if(num_ocupados_ug, 0),
+      pct_trabajadores_vulnerables = 100 * num_vulnerables / na_if(num_ocupados_ug, 0),
+      pct_informales = 100 * num_informales / na_if(num_ocupados_ug, 0),
+      pct_cotizantes = 100 * num_cotizantes / na_if(num_ocupados_ug, 0),
+      pct_asalariados = 100 * num_asalariados / na_if(num_ocupados_ug, 0),
+      pct_cuenta_propia = 100 * num_cuenta_propia / na_if(num_ocupados_ug, 0),
+      pct_domesticos = 100 * num_domesticos / na_if(num_ocupados_ug, 0),
+      pct_jornaleros = 100 * num_jornaleros / na_if(num_ocupados_ug, 0),
+      pct_mujeres_ocupadas = 100 * num_mujeres_ocupadas / na_if(num_ocupados_ug, 0),
       pct_superior_pet = 100 * num_superior_pet / na_if(num_pet_ug, 0),
       prop_dependencia_pet = (num_personas_ug - num_pet_ug) / na_if(num_pet_ug, 0),
       personas_por_ocupado = num_personas_ug / na_if(num_ocupados_ug, 0),
@@ -588,114 +493,57 @@ procesar_postunion <- function(.db) {
         labels = c("Ninguno", "Preescolar", "Primaria", "Secundaria", "Media", "Superior")
       ),
       # Hacinamiento usa todos los residentes del hogar y sus cuartos para dormir.
-      personas_por_cuarto = num_personas / na_if(num_cuartos_dormir, 0),
+      personas_por_dormitorio = num_personas / na_if(num_cuartos_dormir, 0),
+      personas_por_cuarto = num_personas / na_if(num_cuartos, 0),
       bin_hacinamiento = case_when(
-        clase == 1 & personas_por_cuarto >= 3 ~ 1L,
-        clase == 2 & personas_por_cuarto > 3 ~ 1L,
-        !is.na(personas_por_cuarto) & clase %in% c(1, 2) ~ 0L,
+        clase == 1 & personas_por_dormitorio >= 3 ~ 1L,
+        clase == 2 & personas_por_dormitorio > 3 ~ 1L,
+        !is.na(personas_por_dormitorio) & clase %in% c(1, 2) ~ 0L,
         TRUE ~ NA_integer_
-      )
-    ) |>
-    select(-arriendo_imputado_ingreso)
+      ),
+      # Conteo de privaciones observadas (las desconocidas no suman)
+      num_privaciones = coalesce(bin_hacinamiento, 0L) +
+        coalesce(bin_bajo_logro_educ, 0L) + coalesce(bin_rezago_escolar, 0L) +
+        coalesce(bin_trabajo_infantil, 0L) + coalesce(bin_empleo_informal_ipm, 0L),
+      # Arriendo por persona de la unidad de gasto, en unidades de la linea
+      # de pobreza (comparable entre dominios), y arriendo por cuarto
+      arriendo_pc_lp = arriendo / na_if(num_personas_ug, 0) / lp,
+      log_arriendo_cuarto = log1p(arriendo / na_if(num_cuartos, 0))
+    )
 }
 
 
-# (2.7) Funcion que procesa ingreso: train ajusta y guarda; test carga y aplica
-generar_ingreso_personas <- function(base, entrenamiento, archivo_modelo,
-                                     referencia_test = NULL, folds_hogar = NULL) {
-  #' Estimar ingreso individual con las mismas entradas y parametros del codigo viejo.
+# (2.7) Preparar las bases para modelar
+fun_preparar_modelo <- function(.db, .niveles_dominio, .niveles_depto) {
+  #' Tipos y faltantes para modelar
   #'
-  #' @description Usa personas RAW, antes de nuestro select y de crear anios_educ.
-  #' Respuesta: log1p(ingtot); PET se identifica por pet no faltante. Predictores:
-  #' columnas del test salvo id, orden, fex_c, fex_dpto, depto y pet. Educacion
-  #' entra como p6210/p6210s1 originales. Factores nominales: dominio, oficio,
-  #' p6050, p6100, p6240, p6430, p7050 y p7350; NA numericos = -1 y categoricos
-  #' = "NA". Como la referencia, sus niveles se fijan con union de train y test.
-  #' Bosque fijo: 200 arboles, mtry 15, nodo minimo 50, categorias ordenadas por
-  #' ranger y semilla 2026. NO se calibran estos hiperparametros por CV.
-  #' Train: predice cada fold de hogares con los otros cuatro y luego ajusta un
-  #' bosque final con toda PET de train para test. Guarda bosque, niveles, folds
-  #' y predicciones de train. Test solo carga ese archivo: no usa ingtot ni ajusta.
-  #' La transformacion inversa exp(prediccion)-1 reproduce la referencia; no
-  #' aplica correccion de retransformacion, por lo que no garantiza ingreso medio.
-  #' Este OOF global replica el original. Para evaluar la cadena con CV posterior,
-  #' regenerar la etapa de ingreso DENTRO del entrenamiento de cada fold externo:
-  #' pegar estas columnas una vez no garantiza ausencia de filtracion entre etapas.
-  #'
-  #' @param base Personas originales de train o test, sin filtrar columnas.
-  #' @param entrenamiento TRUE: ajustar y guardar; FALSE: cargar y predecir.
-  #' @param archivo_modelo Ruta RDS del bosque y su esquema de entradas.
-  #' @param referencia_test Personas originales de test, necesarias solo en train.
-  #' @param folds_hogar Tabla id/fold con cinco folds de hogares, solo en train.
-  #' @returns Tabla id, id_persona e ingreso_predicho mensual en pesos. No PET = 0.
-  base <- rename_with(base, tolower)
-  resultado <- transmute(base, id, id_persona = orden, ingreso_predicho = 0)
-  # Usar la PET oficial; cualquier alternativa de edad requiere otro nombre
-  # y aprobacion expresa. No sustituir ni recodificar la definicion del DANE.
-  es_pet <- !is.na(base$pet)
-  personas <- base[es_pet, ]
-
-  if (entrenamiento) {
-    referencia_test <- rename_with(referencia_test, tolower)
-    variables <- setdiff(names(referencia_test),
-                          c("id", "orden", "fex_c", "fex_dpto", "depto", "pet"))
-    categoricas <- c("dominio", "oficio", "p6050", "p6100", "p6240",
-                     "p6430", "p7050", "p7350")
-    niveles <- list()
-    for (v in categoricas) {
-      valores <- c(as.character(personas[[v]]),
-                    as.character(referencia_test[[v]][!is.na(referencia_test$pet)]))
-      valores[is.na(valores)] <- "NA"
-      niveles[[v]] <- sort(unique(valores))
-    }
-  } else {
-    guardado <- readRDS(archivo_modelo)
-    variables <- guardado$variables
-    categoricas <- guardado$categoricas
-    niveles <- guardado$niveles
-  }
-
-  datos <- as.data.frame(personas[variables])
-  for (v in categoricas) {
-    valor <- as.character(datos[[v]])
-    valor[is.na(valor)] <- "NA"
-    if (any(!valor %in% niveles[[v]])) stop("Categoria nueva no prevista en ", v)
-    datos[[v]] <- factor(valor, levels = niveles[[v]])
-  }
-  for (v in setdiff(variables, categoricas)) {
-    datos[[v]] <- replace_na(as.numeric(datos[[v]]), -1)
-  }
-
-  if (entrenamiento) {
-    datos$y_log_ingtot <- log1p(personas$ingtot)
-    fold_persona <- folds_hogar$fold[match(personas$id, folds_hogar$id)]
-    stopifnot(!anyNA(fold_persona), setequal(unique(fold_persona), 1:5),
-              !anyDuplicated(folds_hogar$id), all(is.finite(datos$y_log_ingtot)))
-    formula_ingreso <- reformulate(variables, response = "y_log_ingtot")
-    y_log_hat <- rep(NA_real_, nrow(datos))
-    # k=0 ajusta el bosque definitivo; los otros cinco generan predicciones OOF.
-    for (k in c(1:5, 0)) {
-      ajustar <- if (k == 0) rep(TRUE, nrow(datos)) else fold_persona != k
-      bosque <- ranger(
-        formula = formula_ingreso, data = datos[ajustar, , drop = FALSE],
-        num.trees = 200, mtry = 15, min.node.size = 50,
-        respect.unordered.factors = "order", seed = 2026
-      )
-      if (k != 0) {
-        y_log_hat[!ajustar] <- predict(bosque, data = datos[!ajustar, , drop = FALSE])$predictions
-        message("Ingreso individual: fold ", k, "/5 terminado.")
-      }
-    }
-    resultado$ingreso_predicho[es_pet] <- pmax(expm1(y_log_hat), 0)
-    dir.create(dirname(archivo_modelo), recursive = TRUE, showWarnings = FALSE)
-    saveRDS(list(modelo = bosque, variables = variables, categoricas = categoricas,
-                 niveles = niveles, folds_hogar = folds_hogar,
-                 predicciones_train = resultado, semilla = 2026), archivo_modelo)
-  } else if (nrow(datos) > 0) {
-    y_log_hat <- predict(guardado$modelo, data = datos)$predictions
-    resultado$ingreso_predicho[es_pet] <- pmax(expm1(y_log_hat), 0)
-  }
-  resultado
+  #' @description Convierte dominio y depto en factores con los mismos
+  #' niveles en train y test (los niveles se pasan como argumentos). Los NA se reemplazan para que todos los
+  #' modelos corran (caret y model.matrix no aceptan NA):
+  #' - Variables definidas sobre ocupados (pct_*, promedios): 0 cuando el
+  #'   hogar no tiene ocupados; bin_sin_ocupados ya identifica esos hogares.
+  #' - personas_por_ocupado sin ocupados: num_personas_ug.
+  #' - Indicadoras bin_hay_* desconocidas: 0, con una indicadora na_* que
+  #'   marca el desconocimiento.
+  #' - Arriendo y cuota con codigos 98/99: 0; bin_arriendo_nsnr y
+  #'   bin_cuota_nsnr ya los marcan.
+  #' - Resto (menos de 0,1% de los hogares): 0 en numericas y "Ninguno" en
+  #'   nivel_educativo_max.
+  vars_bin_hay <- c("bin_hay_rentista", "bin_hay_pension", "bin_hay_rentas_pensiones",
+                    "bin_hay_ayuda", "bin_hay_remesas", "bin_hay_subsidios",
+                    "bin_hay_bonificaciones")
+  .db |>
+    mutate(
+      dominio = factor(dominio, levels = .niveles_dominio),
+      depto = factor(depto, levels = .niveles_depto),
+      across(all_of(vars_bin_hay), ~ as.integer(is.na(.x)), .names = "na_{.col}"),
+      personas_por_ocupado = coalesce(personas_por_ocupado, as.numeric(num_personas_ug)),
+      # Nivel educativo maximo desconocido (menos de 5 hogares): "Ninguno"
+      nivel_educativo_max = replace(nivel_educativo_max, is.na(nivel_educativo_max), "Ninguno"),
+      across(where(is.numeric), ~ replace_na(.x, 0))
+    ) |>
+    # tenencia_vivienda queda representada por cat_tenencia
+    select(-tenencia_vivienda)
 }
 
 
@@ -707,21 +555,9 @@ generar_ingreso_personas <- function(base, entrenamiento, archivo_modelo,
 db_train_hogares_clean <- fun_preprocess_hogares(db_train_hogares)
 db_test_hogares_clean <- fun_preprocess_hogares(db_test_hogares)
 
-# (3.2) Ingreso sobre RAW: mismos cinco folds de hogares que el codigo de referencia
-set.seed(2026)
-folds_ingreso <- createFolds(factor(db_train_hogares$Pobre, levels = 0:1),
-                             k = 5, returnTrain = FALSE)
-folds_hogar_ingreso <- data.frame(id = db_train_hogares$id, fold = NA_integer_)
-for (k in 1:5) folds_hogar_ingreso$fold[folds_ingreso[[k]]] <- k
-archivo_ingreso <- file.path(dir_resultados, "ingreso_personas", "modelo_ingreso.rds")
-ingresos_train <- generar_ingreso_personas(
-  db_train_personas, TRUE, archivo_ingreso,
-  referencia_test = db_test_personas, folds_hogar = folds_hogar_ingreso)
-ingresos_test <- generar_ingreso_personas(db_test_personas, FALSE, archivo_ingreso)
-
-# (3.3) Procesamiento habitual: adjuntar por persona sin eliminar columnas de RAW
-db_train_personas_clean <- procesar_personas(db_train_personas, ingresos_train)
-db_test_personas_clean <- procesar_personas(db_test_personas, ingresos_test)
+# (3.2) Personas
+db_train_personas_clean <- procesar_personas(db_train_personas)
+db_test_personas_clean <- procesar_personas(db_test_personas)
 
 # ------------------------------------------------------------------------------
 # (4) Union: preparar conteos y pegar horizontalmente una fila por hogar
@@ -734,7 +570,7 @@ db_test_hogares_clean <- unir_bases(db_test_hogares_clean, db_test_personas_hoga
 
 
 # ------------------------------------------------------------------------------
-# (5) Procesamiento postunion: proporciones y carga de cuidado
+# (5) Procesamiento postunion: proporciones, carga de cuidado y vivienda
 # ------------------------------------------------------------------------------
 
 db_train_hogares_clean <- procesar_postunion(db_train_hogares_clean)
@@ -742,11 +578,34 @@ db_test_hogares_clean <- procesar_postunion(db_test_hogares_clean)
 
 
 # ------------------------------------------------------------------------------
-# (6) Exportar las bases finales: una fila por hogar
+# (6) Preparar las bases para modelar: tipos, faltantes y variable objetivo
 # ------------------------------------------------------------------------------
 
-train_clean <- db_train_hogares_clean
-test_clean <- db_test_hogares_clean
+# Los niveles de los factores geograficos se fijan con train, para que train
+# y test tengan las mismas categorias.
+niveles_dominio <- sort(unique(db_train_hogares_clean$dominio))
+niveles_depto   <- sort(unique(db_train_hogares_clean$depto))
+
+# caret exige que los niveles de la respuesta sean nombres validos de R.
+train_clean <- db_train_hogares_clean |>
+  fun_preparar_modelo(niveles_dominio, niveles_depto) |>
+  mutate(Pobre = factor(pobre, levels = c(0, 1), labels = c("No", "Si"))) |>
+  select(-pobre)
+test_clean <- db_test_hogares_clean |>
+  fun_preparar_modelo(niveles_dominio, niveles_depto)
+
+# Verificacion: mismo orden de hogares que la base original y sin NA
+stopifnot(identical(train_clean$id, db_train_hogares$id),
+          identical(test_clean$id, db_test_hogares$id),
+          sum(is.na(train_clean)) == 0, sum(is.na(test_clean)) == 0)
+
+
+# ------------------------------------------------------------------------------
+# (7) Exportar las bases finales: una fila por hogar
+# ------------------------------------------------------------------------------
+
+# CSV para inspeccion. Al leerlos de nuevo los factores quedan como texto;
+# los scripts siguientes usan los objetos en memoria creados por main.R.
 dir_clean <- file.path(root, "01_data", "02_clean")
 dir.create(dir_clean, recursive = TRUE, showWarnings = FALSE)
 write_csv(train_clean, file.path(dir_clean, "train_clean.csv"))
