@@ -40,8 +40,7 @@ scripts <- c(
   "02_creation_income_var.R",
   "03_descriptive_analysis.R",
   "04_modelos_1_27.R",
-  "05_modelos_28_33.R",
-  "06_modelos_34_37.R"
+  "05_modelos_28_33.R"
 )
 # Luego se agregara 06_modelos_34_en_adelante.R, cuando este elaborado.
 for (script in scripts) source(file.path(dir_codigo, script), encoding = "UTF-8")
