@@ -15,7 +15,7 @@ Big Data y Machine Learning — Universidad de los Andes, 2026-2. Grupo 05.
 ## Autores
 
 - Laura Alejandra Puerto Amaya — *202312335*
-- Miguel Hernando Torres — *2023*
+- Miguel Hernando Torres — *202315331*
 - Angel Esteban Bonilla Escamilla — *202424426*
 
 ## Estructura del proyecto
