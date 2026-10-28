@@ -56,13 +56,32 @@ catalogo_modelos <- tibble(numero = 1:33, nombre = c(
   "XGBoost_ingreso_predicho"
 ))
 
-f1_entrega <- function(verdad, probabilidad, corte) {
+metricas_entrega <- function(verdad, probabilidad, corte) {
   stopifnot(length(verdad) == length(probabilidad), !anyNA(probabilidad),
             !anyNA(verdad), is.finite(corte))
   verdad <- as.character(verdad) %in% c("Si", "1")
   pred <- probabilidad >= corte
-  tp <- sum(pred & verdad); fp <- sum(pred & !verdad); fn <- sum(!pred & verdad)
-  2 * tp / max(2 * tp + fp + fn, 1)
+  vp <- sum(pred & verdad); fp <- sum(pred & !verdad)
+  fn <- sum(!pred & verdad); vn <- sum(!pred & !verdad)
+  list(VP = vp, FP = fp, FN = fn, VN = vn,
+       Precision = if (vp + fp > 0) vp / (vp + fp) else NA_real_,
+       Recall = if (vp + fn > 0) vp / (vp + fn) else NA_real_,
+       Especificidad = if (vn + fp > 0) vn / (vn + fp) else NA_real_,
+       Accuracy = if (length(verdad)) (vp + vn) / length(verdad) else NA_real_,
+       F1 = 2 * vp / max(2 * vp + fp + fn, 1))
+}
+
+f1_entrega <- function(verdad, probabilidad, corte) {
+  metricas_entrega(verdad, probabilidad, corte)$F1
+}
+
+agregar_metricas <- function(fila, metricas, tipo = "CV") {
+  anterior <- fila[[paste0("F1_", tipo)]]
+  if (length(anterior) && is.finite(anterior)) {
+    stopifnot(isTRUE(all.equal(as.numeric(anterior), metricas$F1, tolerance = 1e-10)))
+  }
+  for (n in names(metricas)) fila[[paste0(n, "_", tipo)]] <- metricas[[n]]
+  fila
 }
 
 predicciones_caret <- function(modelo) {
@@ -87,11 +106,19 @@ actualizar_excel <- function() {
     arrange(numero)
   comparacion <- left_join(catalogo_modelos, comparacion, by = c("numero", "nombre")) |>
     mutate(estado = if_else(is.na(F1_CV), "Pendiente de estimar/exportar", "Exportado"))
+  comparacion <- comparacion |>
+    select(any_of(c("numero", "nombre", "estado", "punto_corte", "F1_CV", "Precision_CV", "Recall_CV",
+                    "Especificidad_CV", "Accuracy_CV", "VP_CV", "FP_CV", "FN_CV", "VN_CV",
+                    "estado_metricas_CV", "F1_OOB", "Precision_OOB", "Recall_OOB",
+                    "VP_OOB", "FP_OOB", "FN_OOB", "VN_OOB")), everything())
   variables <- bind_rows(lapply(registros, function(z) z$variables))
   grillas <- bind_rows(lapply(registros, function(z) z$grilla))
   definiciones <- tibble(
-    campo = c("F1_CV", "F1_OOB", "criterio_hiperparametros", "grilla", "importancia", "bases"),
+    campo = c("Precision_CV", "Recall_CV", "VP_FP_FN_VN", "F1_CV", "F1_OOB", "criterio_hiperparametros", "grilla", "importancia", "bases"),
     significado = c(
+      "Precision = VP/(VP+FP): entre los clasificados pobres, cuantos realmente lo son. NA si no hay positivos predichos.",
+      "Recall o sensibilidad = VP/(VP+FN): proporcion de pobres reales detectados. NA si no hay pobres reales.",
+      "VP/FP/FN/VN son los cuatro conteos de la matriz de confusion; CV y OOB se identifican por sufijo. Clase positiva: pobre=1.",
       "F1 al juntar predicciones fuera de fold del ganador y aplicar su corte; no promedio de F1 por fold.",
       "F1 de predicciones OOB del bosque original. Se conserva ademas de CV.",
       "El valor del criterio de seleccion (ROC o F a corte 0.5) se distingue del F1 CV conjunto al corte final.",
@@ -205,6 +232,7 @@ exportar_modelo <- function(numero, nombre, modelo, pred_test, corte,
                                pred_cv = NULL, parametros = list(), importancia = NULL,
                                metrica_importancia = "No calculada") {
   f1_oob <- NA_real_
+  metricas_oob <- NULL
   original_metodo <- "CV; hiperparametros seleccionados segun criterio indicado"
   if (inherits(modelo, "train")) {
     pred_cv <- predicciones_caret(modelo)
@@ -213,13 +241,17 @@ exportar_modelo <- function(numero, nombre, modelo, pred_test, corte,
     for (v in names(modelo$bestTune)) fila_seleccion <- fila_seleccion[fila_seleccion[[v]] == modelo$bestTune[[v]], , drop = FALSE]
     if (!is.null(modelo$preProcess)) parametros$preprocesamiento <- texto_entrega(modelo$preProcess$method)
   } else if (inherits(modelo, "ranger")) {
-    f1_oob <- f1_entrega(db_train$Pobre, modelo$predictions[, "Si"], corte)
+    metricas_oob <- metricas_entrega(db_train$Pobre, modelo$predictions[, "Si"], corte)
+    f1_oob <- metricas_oob$F1
     original_metodo <- "OOB; mismo corte conservado, CV adicional sin recalibrarlo"
     pred_cv <- cv_bagging(rebalanceo != "Ninguno")
     parametros <- c(list(num.trees = modelo$num.trees, mtry = modelo$mtry,
                          min.node.size = modelo$min.node.size, splitrule = "gini"), parametros)
   }
   stopifnot(!is.null(pred_cv))
+  # Conservar OOF para recuperar metricas sin volver a estimar ni usar test.
+  saveRDS(select(pred_cv, any_of(c("obs", "Si", "rowIndex", "Resample"))),
+          file.path(dir_entrega, "cache", paste0("predicciones_cv_", sprintf("%02d", numero), ".rds")))
   if (is.null(importancia) && inherits(modelo, "ranger") && length(modelo$variable.importance)) {
     importancia <- tibble(variable = names(modelo$variable.importance),
                            importancia = as.numeric(modelo$variable.importance))
@@ -280,6 +312,9 @@ exportar_modelo <- function(numero, nombre, modelo, pred_test, corte,
                   function(p) tryCatch(as.character(if (isNamespaceLoaded(p)) getNamespaceVersion(p) else packageVersion(p)),
                     error = function(e) "No disponible en esta sesion"), character(1))),
                 huella_features = unname(tools::md5sum(file.path(dir_features, "db_train.rds"))))
+  fila <- agregar_metricas(fila, metricas_entrega(pred_cv$obs, pred_cv$Si, corte))
+  fila$estado_metricas_CV <- "Completa: predicciones OOF al corte seleccionado"
+  if (!is.null(metricas_oob)) fila <- agregar_metricas(fila, metricas_oob, "OOB")
   # Los parametros escalares tambien quedan como columnas para filtrar en Excel.
   for (v in unique(names(parametros))) if (length(parametros[[v]]) == 1L) fila[[v]] <- parametros[[v]]
   if (inherits(modelo, "train")) {
@@ -296,6 +331,57 @@ exportar_modelo <- function(numero, nombre, modelo, pred_test, corte,
                     grilla, importancia, metrica_importancia, modelo)
 }
 
+
+# ------------------------------------------------------------------------------
+# (1.6) Completar metricas desde resultados guardados, sin reentrenamiento
+# ------------------------------------------------------------------------------
+
+actualizar_metricas_guardadas <- function(origen = dir_entrega) {
+  archivos <- list.files(file.path(origen, "registros"), "^[0-9]+[.]rds$", full.names = TRUE)
+  for (f in archivos) {
+    z <- readRDS(f)
+    numero <- z$fila$numero
+    if (numero > 27) next
+    columnas_cv <- paste0(c("VP", "FP", "FN", "VN", "Precision", "Recall", "F1"), "_CV")
+    tiene_cv <- all(columnas_cv %in% names(z$fila)) &&
+      !anyNA(unlist(z$fila[c("VP_CV", "FP_CV", "FN_CV", "VN_CV")]))
+    pred <- NULL
+    modelo <- NULL
+    archivo_cv <- file.path(origen, "cache", paste0("predicciones_cv_", sprintf("%02d", numero), ".rds"))
+    archivo_modelo <- file.path(origen, "modelos", paste0(sprintf("%02d", numero), ".rds"))
+    if (!tiene_cv && file.exists(archivo_cv)) pred <- readRDS(archivo_cv)
+    if (!tiene_cv && is.null(pred) && file.exists(archivo_modelo)) {
+      modelo <- readRDS(archivo_modelo)
+      if (inherits(modelo, "train") && !is.null(modelo$pred) && nrow(modelo$pred) > 0) pred <- predicciones_caret(modelo)
+    }
+    if (!tiene_cv && is.null(pred) && numero %in% 10:12) {
+      cache <- file.path(origen, "cache", if (numero == 12) "bagging_pesos.rds" else "bagging.rds")
+      if (file.exists(cache)) pred <- readRDS(cache)$pred
+    }
+    if (!tiene_cv && is.null(pred) && numero %in% 22:27) {
+      objeto <- c("pred_cv_xgb_roc", "pred_cv_xgb_f1", "pred_cv_xgb_up",
+                  "pred_cv_lgbm_roc", "pred_cv_lgbm_f1", "pred_cv_lgbm_up")[numero - 21]
+      if (exists(objeto, envir = .GlobalEnv, inherits = FALSE)) pred <- get(objeto, envir = .GlobalEnv)
+    }
+    if (!is.null(pred) && nrow(pred) && !anyNA(pred$Si)) {
+      z$fila <- agregar_metricas(z$fila, metricas_entrega(pred$obs, pred$Si, z$fila$punto_corte))
+      z$fila$estado_metricas_CV <- "Recuperada de predicciones OOF guardadas"
+      if (inherits(modelo, "ranger")) {
+        z$fila <- agregar_metricas(z$fila,
+          metricas_entrega(pred$obs, modelo$predictions[, "Si"], z$fila$punto_corte), "OOB")
+      }
+    } else if (tiene_cv) {
+      z$fila$estado_metricas_CV <- "Completa: conteos y metricas CV guardados"
+    } else z$fila$estado_metricas_CV <- "Solo F1 disponible: faltan predicciones OOF; no se reestima"
+    destino <- file.path(dir_entrega, "registros", basename(f))
+    saveRDS(z, destino)
+    csv_origen <- file.path(origen, z$fila$csv)
+    csv_destino <- file.path(dir_entrega, z$fila$csv)
+    if (!file.exists(csv_destino) && file.exists(csv_origen)) file.copy(csv_origen, csv_destino)
+    rm(modelo, pred); gc(verbose = FALSE)
+  }
+  actualizar_excel()
+}
 
 # ------------------------------------------------------------------------------
 # (2) Cargar las bases y configurar la validacion cruzada

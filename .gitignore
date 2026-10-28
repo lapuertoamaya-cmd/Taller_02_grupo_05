@@ -1,1 +1,50 @@
-.Rproj.user
+# R y RStudio: estado local de cada computador.
+.Rproj.user/
+.Rhistory
+.RData
+.RDataTmp
+.Ruserdata
+Rplots.pdf
+*.Rout
+*.Rout.fail
+*.Rcheck/
+
+# Configuracion personal y credenciales; conservar sus archivos de ejemplo.
+.Renviron
+.env
+.env.local
+.httr-oauth
+
+# Archivos temporales del editor, Excel y el sistema operativo.
+~$*
+*.tmp
+*.temp
+*.bak
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Bibliotecas locales de renv; conservar renv.lock y renv/activate.R.
+/renv/library/
+/renv/staging/
+/renv/cache/
+
+# Bases derivadas: se reconstruyen con los scripts 01 y 02.
+/01_data/02_clean/
+/01_data/03_features/
+/01_data/entrega_final/
+
+# Matrices y modelos intermedios de entrenamiento.
+/03_outputs/cache_consolidado/
+/03_outputs/ingreso_personas/
+/03_outputs/xgb_consolidado/fold_*.rds
+/03_outputs/forest_consolidado/fold_*.rds
+/03_outputs/random_forest/modelo_validacion_*.rds
+/03_outputs/entrega_final/cache/
+/03_outputs/entrega_final/modelos/
+
+# Se conservan los datos originales, los scripts y la documentacion.
+# Tambien los Excel, CSV finales y registros de entrega_final/.
+# No ignorar globalmente *.rds: los registros finales conservan las metricas.

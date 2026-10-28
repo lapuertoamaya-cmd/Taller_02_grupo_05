@@ -41,16 +41,20 @@ Contiene los datos usados y producidos por el taller.
 
 - `01_data/01_raw/`: las 4 bases originales de la competencia de Kaggle del curso (`train_hogares.csv`, `test_hogares.csv`, `train_personas.csv`, `test_personas.csv`) y `sample_submission.csv`. `train_personas.csv` (~240 MB) se versiona con Git LFS; después de clonar el repositorio se corre `git lfs pull` para traer el archivo real en vez de su puntero.
 - `01_data/02_clean/`: `train_clean.csv` / `test_clean.csv`, salida de `01_cleaning.R` — hogares y personas agregados por hogar, con tipos definidos y sin valores faltantes.
-- `01_data/03_features/`: `db_train.rds`, `db_test.rds`, `folds.rds`, salida de `02_ingreso.R` — las mismas bases de `02_clean/` ya con la variable de ingreso potencial incorporada, y los folds de validación cruzada compartidos por todos los modelos.
+- `01_data/03_features/`: `db_train.rds`, `db_test.rds`, `folds.rds`, salida de `02_creation_income_var.R` — las mismas bases de `02_clean/` ya con la variable de ingreso potencial incorporada, y los folds de validación cruzada compartidos por todos los modelos.
 
 ### `02_code/`
 
 Contiene los scripts de R del proyecto, en el orden en que se ejecutan.
 
-- `00_set_up.R`: carga los paquetes del proyecto (vía `pacman`, instala los que falten) y resuelve conflictos de nombres entre paquetes (p. ej. `dplyr::select` vs. `MASS::select`).
+- `00_setup.R`: carga los paquetes del proyecto (vía `pacman`, instala los que falten) y resuelve conflictos de nombres entre paquetes (p. ej. `dplyr::select` vs. `MASS::select`).
 - `01_cleaning.R`: importa las 4 bases crudas, limpia hogares y personas (vivienda, arriendo, educación, condiciones laborales, protección social), agrega personas por hogar, y exporta `train_clean.csv` / `test_clean.csv` a `01_data/02_clean/`.
-- `02_ingreso.R`: construye la variable de ingreso potencial en dos etapas: (1) modelo de dos partes con XGBoost para el ingreso individual — P(ingreso > 0) × E[ingreso \| ingreso > 0] —, estimado fuera de muestra con 5 folds; (2) agregación al hogar replicando la fórmula del DANE (unidad de gasto, arriendo imputado). Guarda `db_train`, `db_test` y `folds` en `01_data/03_features/`.
-- `03_modelos.R`: entrena y evalúa 27 modelos de clasificación — Elastic Net, LDA, QDA, Naive Bayes, Bagging, Random Forest, AdaBoost, Gradient Boosting, XGBoost y LightGBM — con selección de hiperparámetros por ROC o por F1 (umbral calibrado en la curva precisión-recall) y variantes con rebalanceo por oversampling. Exporta un `.csv` de envío a Kaggle por modelo.
+- `02_creation_income_var.R`: construye la variable de ingreso potencial en dos etapas: (1) modelo de dos partes con XGBoost para el ingreso individual — P(ingreso > 0) × E[ingreso \| ingreso > 0] —, estimado fuera de muestra con 5 folds; (2) agregación al hogar replicando la fórmula del DANE (unidad de gasto, arriendo imputado). Guarda `db_train`, `db_test` y `folds` en `01_data/03_features/`.
+- `03_descriptivas.R`: pendiente de revision; esta comentado en `main.R` y no se ejecuta actualmente.
+- `04_modelos_1_27.R`: entrena los modelos 01-27 y exporta sus parametros, metricas de CV, matrices de confusion, importancia disponible y predicciones.
+- `05_modelos_28_33.R`: entrena seis bloques adicionales desde las bases originales, selecciona sus ganadores y exporta los modelos 28-33. Incluye las especificaciones iniciales y las posteriores con ingreso RF; no necesita ganadores previamente guardados.
+
+Solo los scripts listados en `main.R` forman parte de la ejecucion principal.
 
 ### `04_documentation/`
 
@@ -61,10 +65,11 @@ Contiene los scripts de R del proyecto, en el orden en que se ejecutan.
 
 El pipeline general del taller es:
 
-1. Cargar los paquetes del proyecto y resolver conflictos de nombres (`00_set_up.R`).
+1. Cargar los paquetes del proyecto y resolver conflictos de nombres (`00_setup.R`).
 2. Limpiar las 4 bases crudas y construir la base de hogares con sus variables (`01_cleaning.R`).
-3. Estimar el ingreso potencial por persona fuera de muestra y agregarlo al hogar (`02_ingreso.R`).
-4. Entrenar y evaluar los modelos de clasificación, calibrar el umbral de cada uno y exportar los envíos a Kaggle (`03_modelos.R`).
+3. Estimar el ingreso potencial por persona fuera de muestra y agregarlo al hogar (`02_creation_income_var.R`).
+4. Entrenar y evaluar los modelos 01-27 (`04_modelos_1_27.R`).
+5. Entrenar los seis bloques adicionales y exportar sus ganadores 28-33 (`05_modelos_28_33.R`).
 
 ## Datos
 
@@ -105,19 +110,19 @@ source("main.R")
 ```
 
 `main.R` ubica la raíz del proyecto automáticamente (sin rutas personales),
-carga los paquetes necesarios y ejecuta en orden los cuatro scripts de
-`02_code/` descritos arriba.
+carga los paquetes y ejecuta `00_setup.R`, `01_cleaning.R`,
+`02_creation_income_var.R`, `04_modelos_1_27.R` y `05_modelos_28_33.R`.
+Las descriptivas quedan comentadas por ahora.
 
-`02_ingreso.R` tarda cerca de 15 minutos. `03_modelos.R` tarda más, porque
-entrena los 27 modelos, varios con validación cruzada de 5 folds y búsqueda de
-hiperparámetros. Una vez generados, `01_data/03_features/db_train.rds` y
-`db_test.rds` permiten correr `03_modelos.R` directamente sin repetir
-`02_ingreso.R`.
+Los bloques 04 y 05 entrenan y evalúan sus modelos; la ejecución completa puede
+tardar muchas horas según el equipo. El 02 reutiliza sus bases preparadas cuando
+las entradas no han cambiado. El 05 comparte entre sus modelos 32 y 33 las
+matrices de ingreso RF que calcula durante esa misma ejecución.
 
 ## Dependencias
 
 Los scripts usan los siguientes paquetes de R, instalados y cargados
-automáticamente con `pacman::p_load()` en `00_set_up.R`:
+automáticamente con `p_load()` en `00_setup.R`:
 
 - **Datos y presentación**: `tidyverse`, `readxl`, `writexl`
 - **Entrenamiento y modelos**: `caret`, `glmnet`, `MASS`, `naivebayes`, `rpart`, `rpart.plot`, `ranger`, `randomForest`, `adabag`, `gbm`, `xgboost`, `lightgbm`
@@ -126,18 +131,26 @@ automáticamente con `pacman::p_load()` en `00_set_up.R`:
 
 ## Productos principales
 
-`03_modelos.R` exporta un envío a Kaggle por modelo, como un `.csv` nombrado
-según el modelo y sus hiperparámetros/umbral, en el directorio de trabajo. Por
-ejemplo:
+Los bloques 04 y 05 alimentan `03_outputs/entrega_final/`:
 
-- `RandomForest_F1_prob_<umbral>.csv`
-- `XGBoost_F1_prob_<umbral>.csv`
-- `LightGBM_F1_prob_<umbral>.csv`
-- `LDA.csv`, `QDA.csv`, `NaiveBayes.csv`, `AdaBoost.csv`, `Bagging.csv`
+- `predicciones/`: CSV numerados por modelo, exclusivamente con `id` y `pobre`.
+- `registros/`: parámetros, grillas, métricas e importancia disponible por modelo.
+- `comparacion_modelos.xlsx`: F1 de CV, corte, precisión, recall y los cuatro conteos de la matriz de confusión, además de parámetros y otras características del ajuste. Los modelos pendientes quedan identificados.
+- `importancia_variables.xlsx`: importancia por variable y modelo, indicando su métrica. No comparar directamente escalas diferentes.
+- `modelos/` y `cache/`: modelos y archivos intermedios generados localmente, excluidos por `.gitignore`.
+
+Cada exportación reconstruye los dos Excel desde todos los registros presentes.
+Conservar los registros para mantener los resultados anteriores y cerrar los
+Excel durante la ejecución para evitar bloqueos de escritura.
+
+Las métricas CV usan predicciones fuera de fold, no predicciones del ajuste final
+sobre sus propios datos de entrenamiento. Las especificaciones con distintas
+bases o particiones no constituyen una comparación controlada entre bases.
 
 ## Software
 
-- R 4.5.2
+- La version de R y de los paquetes utilizada en cada ajuste queda registrada en sus resultados.
+- La semilla del flujo es 2026; fijar la semilla no bloquea las versiones de los paquetes.
 
 ## Reglas del repositorio
 
