@@ -38,7 +38,7 @@ scripts <- c(
   "00_setup.R",
   "01_cleaning.R",
   "02_creation_income_var.R",
-  # "03_descriptivas.R", # Pendiente de rehacer; no se ejecuta por ahora.
+  "03_descriptive_analysis.R",
   "04_modelos_1_27.R",
   "05_modelos_28_33.R"
 )
