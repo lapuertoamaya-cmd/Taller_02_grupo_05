@@ -8,7 +8,7 @@
 #   04_documentation/diccionario_variables.xlsx (hoja Variables hogares).
 #   Paquetes del setup y rutas definidas en main.R.
 # Output:
-#   Cuatro CSV en 03_outputs/descriptivas/tables/ y tres PDF vectoriales
+#   Cuatro CSV en 03_outputs/descriptivas/tables/ y cuatro PDF vectoriales
 #   en 03_outputs/descriptivas/figures/, numerados segun el orden del analisis.
 # ------------------------------------------------------------------------------
 
@@ -338,6 +338,42 @@ comparacion_train_test <- map_dfr(variables_comunes, function(v) {
 
 write_csv(comparacion_train_test,
           file.path(dir_salida, "tables", "04_comparacion_train_test.csv"))
+
+# ------------------------------------------------------------------------------
+# (7) Distribucion de la linea de pobreza: entrenamiento frente a prueba
+# ------------------------------------------------------------------------------
+
+test_hogares_lp <- read_csv(file.path(dir_raw_completo, "test_hogares.csv"),
+                            col_select = Lp, show_col_types = FALSE)
+lineas_pobreza <- bind_rows(
+  tibble(muestra = "Entrenamiento", linea_pobreza = train_hogares$Lp),
+  tibble(muestra = "Prueba", linea_pobreza = test_hogares_lp$Lp)
+) |>
+  filter(is.finite(linea_pobreza), linea_pobreza > 0) |>
+  mutate(muestra = factor(muestra, levels = c("Entrenamiento", "Prueba")))
+
+# Densidades sin ponderar; mismo suavizado para comparar ambas muestras.
+# La linea es mensual por persona, no ingreso observado ni predicho.
+ancho_lp <- bw.nrd0(lineas_pobreza$linea_pobreza)
+fig_lineas_pobreza <- ggplot(lineas_pobreza,
+    aes(x = linea_pobreza, color = muestra, fill = muestra)) +
+  geom_density(alpha = 0.2, linewidth = 0.9, bw = ancho_lp) +
+  scale_color_manual(values = c("Entrenamiento" = "#2563EB", "Prueba" = "#DC2626")) +
+  scale_fill_manual(values = c("Entrenamiento" = "#2563EB", "Prueba" = "#DC2626")) +
+  scale_x_continuous(labels = function(x)
+    format(x, big.mark = ".", decimal.mark = ",", scientific = FALSE, trim = TRUE)) +
+  labs(title = "Distribución de la línea de pobreza",
+       subtitle = "Comparación sin ponderar entre hogares de entrenamiento y prueba.",
+       x = "Línea de pobreza mensual por persona (pesos)", y = "Densidad",
+       color = NULL, fill = NULL) +
+  guides(color = guide_legend(nrow = 1, ncol = 2),
+         fill = guide_legend(nrow = 1, ncol = 2)) +
+  theme_minimal(base_size = 12) +
+  theme(legend.position = "bottom", legend.justification = "center",
+        plot.title = element_text(face = "bold"))
+
+ggsave(file.path(dir_salida, "figures", "04_distribucion_linea_pobreza.pdf"),
+       fig_lineas_pobreza, device = cairo_pdf, width = 10, height = 6.5)
 
 cat("\nListo. Tablas y figura guardadas en",
     normalizePath(dir_salida),
