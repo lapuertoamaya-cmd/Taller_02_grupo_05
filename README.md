@@ -126,18 +126,6 @@ tardar muchas horas según el equipo. El 02 reutiliza sus bases preparadas cuand
 las entradas no han cambiado. El 05 comparte entre sus modelos 32 y 33 las
 matrices de ingreso RF que calcula durante esa misma ejecución.
 
-### Ejecutar únicamente las descriptivas
-
-Con las rutas y paquetes de `main.R` ya definidos y los archivos `db_train.rds`
-y `db_test.rds` generados por el 02, ejecutar:
-
-```r
-source(file.path(dir_codigo, "03_descriptive_analysis.R"), encoding = "UTF-8")
-```
-
-Esta llamada no vuelve a entrenar ingresos ni modelos de clasificación. Crea
-las carpetas de salida cuando faltan y actualiza los cinco archivos de descriptivas.
-
 ## Dependencias
 
 Los scripts usan los siguientes paquetes de R, instalados y cargados
