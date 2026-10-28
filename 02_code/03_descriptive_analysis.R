@@ -160,9 +160,10 @@ fig_ingreso <- ggplot(ingreso_pc,
     color = NULL
   ) +
   theme_minimal(base_size = 12) +
-  theme(legend.position = "bottom", plot.title = element_text(face = "bold")) +
-  guides(fill = guide_legend(nrow = 2, byrow = TRUE),
-         color = guide_legend(nrow = 2, byrow = TRUE))
+  theme(legend.position = "bottom", legend.justification = "center",
+        plot.title = element_text(face = "bold")) +
+  guides(fill = guide_legend(nrow = 1, ncol = 3, byrow = TRUE),
+         color = guide_legend(nrow = 1, ncol = 3, byrow = TRUE))
 
 ggsave(
   file.path(dir_salida, "figures", "01_distribucion_ingreso_por_persona.pdf"),
