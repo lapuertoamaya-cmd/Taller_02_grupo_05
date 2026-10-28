@@ -8,7 +8,7 @@
 #   04_documentation/diccionario_variables.xlsx (hoja Variables hogares).
 #   Paquetes del setup y rutas definidas en main.R.
 # Output:
-#   Tres CSV en 03_outputs/descriptivas/tables/ y dos PDF vectoriales
+#   Tres CSV en 03_outputs/descriptivas/tables/ y tres PDF vectoriales
 #   en 03_outputs/descriptivas/figures/, numerados segun el orden del analisis.
 # ------------------------------------------------------------------------------
 
@@ -274,6 +274,37 @@ ggsave(
   width = 12,
   height = 9
 )
+
+# ------------------------------------------------------------------------------
+# (5) Magnitud absoluta y signo de la asociacion con pobreza
+# ------------------------------------------------------------------------------
+
+top_vars_absolutas <- top_vars |>
+  mutate(magnitud = abs(correlacion_pobre),
+         signo = factor(if_else(correlacion_pobre >= 0, "Positiva", "Negativa"),
+                        levels = c("Positiva", "Negativa")))
+
+fig_top_absolutas <- ggplot(top_vars_absolutas,
+    aes(x = magnitud, y = reorder(etiqueta, magnitud), fill = signo)) +
+  geom_col(width = 0.8) +
+  geom_text(aes(label = sprintf("%.3f", magnitud)), hjust = -0.15, size = 3.5) +
+  scale_fill_manual(values = c("Positiva" = "#2563EB", "Negativa" = "#DC2626"),
+                    drop = FALSE) +
+  # Todas las barras parten de cero; el color conserva el signo original.
+  scale_x_continuous(limits = c(0, NA), breaks = seq(0, 1, by = 0.05),
+                     expand = expansion(mult = c(0, 0.14))) +
+  labs(title = "Fuerza de asociación de las variables con la pobreza",
+       subtitle = "Quince mayores correlaciones absolutas; el color indica el signo original.",
+       x = "Valor absoluto de la correlación con la condición de pobreza",
+       y = NULL, fill = NULL) +
+  guides(fill = guide_legend(nrow = 1, ncol = 2, byrow = TRUE)) +
+  theme_minimal(base_size = 12) +
+  theme(legend.position = "bottom", legend.justification = "center",
+        panel.grid.major.y = element_blank(),
+        plot.title = element_text(face = "bold"))
+
+ggsave(file.path(dir_salida, "figures", "03_asociacion_absoluta_pobreza.pdf"),
+       fig_top_absolutas, device = cairo_pdf, width = 12, height = 9)
 
 cat("\nListo. Tablas y figura guardadas en",
     normalizePath(dir_salida),
