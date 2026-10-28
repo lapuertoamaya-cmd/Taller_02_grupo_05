@@ -8,7 +8,7 @@
 #   04_documentation/diccionario_variables.xlsx (hoja Variables hogares).
 #   Paquetes del setup y rutas definidas en main.R.
 # Output:
-#   Cuatro CSV en 03_outputs/descriptivas/tables/ y cuatro PDF vectoriales
+#   Cinco CSV en 03_outputs/descriptivas/tables/ y cuatro PDF vectoriales
 #   en 03_outputs/descriptivas/figures/, numerados segun el orden del analisis.
 # ------------------------------------------------------------------------------
 
@@ -374,6 +374,34 @@ fig_lineas_pobreza <- ggplot(lineas_pobreza,
 
 ggsave(file.path(dir_salida, "figures", "04_distribucion_linea_pobreza.pdf"),
        fig_lineas_pobreza, device = cairo_pdf, width = 10, height = 6.5)
+
+# ------------------------------------------------------------------------------
+# (8) Comparar pobres y no pobres dentro de entrenamiento
+# ------------------------------------------------------------------------------
+
+# Pobreza observada, no predicha. Medias sin ponderar; binarias como proporciones.
+# La diferencia se expresa como pobres menos no pobres, en la unidad original.
+comparacion_pobreza <- map_dfr(setdiff(vars_numericas, c("id", "Pobre", "pobre")), function(v) {
+  x <- db_train[[v]][db_train$Pobre == "Si"]
+  y <- db_train[[v]][db_train$Pobre == "No"]
+  x <- x[is.finite(x)]; y <- y[is.finite(y)]
+  prueba <- if (length(x) >= 2 && length(y) >= 2 && (var(x) > 0 || var(y) > 0))
+    tryCatch(t.test(x, y, var.equal = FALSE, alternative = "two.sided"),
+             error = function(e) NULL) else NULL
+  tibble(variable = v, n_pobres = length(x), n_no_pobres = length(y),
+    media_pobres = if (length(x)) mean(x) else NA_real_,
+    media_no_pobres = if (length(y)) mean(y) else NA_real_,
+    diferencia_pobres_no_pobres = media_pobres - media_no_pobres,
+    p_value = if (is.null(prueba)) NA_real_ else prueba$p.value,
+    nota = if (is.null(prueba)) "Contraste no estimable: datos insuficientes o sin variacion" else "")
+}) |>
+  left_join(etiquetas, by = "variable") |>
+  mutate(nombre = coalesce(nombre, str_to_sentence(str_replace_all(variable, "_", " ")))) |>
+  select(variable, nombre, n_pobres, n_no_pobres, media_pobres, media_no_pobres,
+         diferencia_pobres_no_pobres, p_value, nota)
+
+write_csv(comparacion_pobreza,
+          file.path(dir_salida, "tables", "05_comparacion_pobres_no_pobres_train.csv"))
 
 cat("\nListo. Tablas y figura guardadas en",
     normalizePath(dir_salida),
