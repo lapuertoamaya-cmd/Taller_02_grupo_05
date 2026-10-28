@@ -56,9 +56,7 @@ Contiene los scripts de R del proyecto, en el orden en que se ejecutan.
 - `02_creation_income_var.R`: construye la variable de ingreso potencial en dos etapas: (1) modelo de dos partes con XGBoost para el ingreso individual — P(ingreso > 0) × E[ingreso \| ingreso > 0] —, estimado fuera de muestra con 5 folds; (2) agregación al hogar replicando la fórmula del DANE (unidad de gasto, arriendo imputado). Guarda `db_train`, `db_test` y `folds` en `01_data/03_features/`.
 - `03_descriptive_analysis.R`: revisa dimensiones de las cuatro bases, desbalance de pobreza, distribuciones del ingreso observado y predicho, y correlaciones simples. Guarda tres tablas CSV y dos gráficas PDF en `03_outputs/descriptivas/`. Usa nombres descriptivos del diccionario y excluye `id` de las correlaciones.
 - `04_modelos_1_27.R`: entrena los modelos 01-27 y exporta sus parametros, metricas de CV, matrices de confusion, importancia disponible y predicciones.
-- `05_modelos_28_33.R`: entrena seis bloques adicionales desde las bases originales, selecciona sus ganadores y exporta los modelos 28-33. Incluye las especificaciones iniciales y las posteriores con ingreso RF; no necesita ganadores previamente guardados.
-
-Solo los scripts listados en `main.R` forman parte de la ejecucion principal.
+- `05_modelos_28_33.R`: entrena seis bloques adicionales desde las bases originales, selecciona sus ganadores y exporta los modelos 28-33.
 
 ### `04_documentation/`
 
@@ -176,7 +174,7 @@ Los bloques 04 y 05 alimentan `03_outputs/entrega_final/`:
 - `registros/`: parámetros, grillas, métricas e importancia disponible por modelo.
 - `comparacion_modelos.xlsx`: F1 de CV, corte, precisión, recall y los cuatro conteos de la matriz de confusión, además de parámetros y otras características del ajuste. Los modelos pendientes quedan identificados.
 - `importancia_variables.xlsx`: importancia por variable y modelo, indicando su métrica. No comparar directamente escalas diferentes.
-- `modelos/` y `cache/`: modelos y archivos intermedios generados localmente, excluidos por `.gitignore`.
+- `modelos/` : modelos.
 
 Cada exportación reconstruye los dos Excel desde todos los registros presentes.
 Conservar los registros para mantener los resultados anteriores y cerrar los
