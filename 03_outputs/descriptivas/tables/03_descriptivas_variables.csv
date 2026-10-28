@@ -1,104 +1,104 @@
 variable,nombre,media,sd,correlacion_pobre
-pct_salud_no_contributiva,Salud no contributiva,48.99535013,44.76454548,0.398065733
-personas_por_ocupado,Personas por ocupado,2.213448544,1.225663061,0.379423733
-pct_personas_ingreso,Ocupados y pensionados (% de la unidad de gasto),56.2734877,33.49615217,-0.371637435
-pct_salud_subsidiada,Salud subsidiada,42.29673372,44.11379112,0.371079259
-num_menores18,Menores de edad,0.917695199,1.120062184,0.364020082
-personas_por_cuarto,Personas por cuarto de la vivienda,1.063647155,0.682129359,0.340060743
-num_ratio_lp_sin_arr_hat,"Ingreso predicho respecto de la línea de pobreza, sin arriendo imputado",2.43550998,2.58341243,-0.335407716
-num_ing_ug_hat,Ingreso predicho de la unidad de gasto,1810599.219,1652034.755,-0.324593087
-num_privaciones,N�mero de privaciones aproximadas,1.249696896,1.027525043,0.318188271
-personas_por_dormitorio,Personas por dormitorio,1.728318166,0.83026737,0.315820941
-num_ing_max_hat,Mayor ingreso individual predicho del hogar,1244824.753,1084475.267,-0.312515441
-num_cotizantes,Numero de ocupados que cotizan pension,0.573902764,0.757686227,-0.295753268
-pct_ocupados,Personas ocupadas (% de la unidad de gasto),49.6900807,31.9117147,-0.291270683
-num_menores10,Menores de 10 anios,0.486645247,0.783588304,0.290799984
-pct_cotizantes,Cotizantes a pensión (% de ocupados),34.37208539,42.99169451,-0.287116138
-pct_trabajadores_vulnerables,Porcentaje de trabajadores vulnerables segun regla aprobada,32.9517408,43.37410747,0.286765483
-pct_informales,Porcentaje de informales segun proxy aprobada,39.06757432,46.0459673,0.284031546
-pct_pet,Porcentaje PET,86.53506636,18.777155,-0.266607654
-prop_dependencia_pet,Dependencia respecto de PET,0.23804747,0.402943906,0.261971081
-anios_educ_promedio_pet,Educacion promedio PET,9.524761777,3.995520833,-0.258857408
-num_asalariados,Numero de asalariados de posiciones 1 o 2,0.634208293,0.788724587,-0.258155731
-pct_asalariados,Porcentaje de asalariados de posiciones 1 o 2,37.13318527,43.2258329,-0.242838232
-num_perceptores_hat,Número de perceptores de ingreso predicho,1.656589476,0.923091227,-0.240438536
-num_personas_ug,Personas de la unidad de gasto,3.279570805,1.77247569,0.240436984
-pct_superior_pet,Porcentaje superior entre PET,30.52265075,37.29121861,-0.23941112
-num_personas,Personas del hogar,3.292367847,1.774799242,0.2372489
-bin_hay_ayuda,Hogar con ayuda institucional,0.150575897,0.357636088,0.234101585
-bin_hacinamiento,Hacinamiento aproximado,0.094004607,0.291836011,0.232543598
-carga_cuidado,Carga potencial de cuidado,0.782844326,0.894907765,0.231659805
-num_menores6,Menores de seis anios,0.282547284,0.567519637,0.228003078
-anios_educ_max,Educacion maxima del hogar,11.66507032,4.268087368,-0.223430062
-anios_educ_jefe,Educacion del jefe,9.091949564,5.036813241,-0.223315752
-bin_jefe_vulnerable,Jefe trabajador vulnerable,0.273623909,0.445819549,0.218565303
-bin_bajo_logro_educ,Bajo logro educativo,0.392980116,0.488413954,0.218313143
-bin_jefe_informal,Jefe informal,0.323399612,0.467775191,0.216377669
-num_superior_pet,PET con educacion superior,0.771744665,0.966828075,-0.215034263
-bin_hay_rentas_pensiones,Hogar con rentas o pensiones,0.218931862,0.413523565,-0.208127656
-num_vulnerables,Numero de trabajadores vulnerables segun regla aprobada,0.582238118,0.861671382,0.206043988
-bin_rezago_escolar,Rezago escolar aproximado,0.156037827,0.362892301,0.20514589
-num_inactivos_ug,Inactivos de la unidad de gasto,1.025812318,1.027994278,0.204133016
-edad_promedio,Edad promedio del hogar,37.43954351,16.87622821,-0.201970942
-bin_jefe_educacion_superior,Jefe con educacion superior,0.272387245,0.445189438,-0.190373719
-num_informales,Numero de informales segun proxy aprobada,0.686408826,0.943245226,0.188656379
-anios_educ_pareja,Educacion conjunta de jefe y pareja,14.11911372,8.811859824,-0.183470059
-bin_hay_pension,Hogar con pension,0.139191319,0.346147111,-0.182360831
-beneficios_promedio_ocupados,Beneficios laborales promedio,0.340403357,0.637224545,-0.178327377
-num_pensionistas_ug,Pensionados de la unidad de gasto,0.156365179,0.410687759,-0.174439305
-pct_cuenta_propia,"Porcentaje de trabajadores por cuenta propia, posicion 4 sin mezclar posicion 6",40.43635558,43.49663504,0.172233793
-num_ratio_lp_hat,Ingreso predicho por persona respecto de la línea de pobreza,2.836345131,6.274714888,-0.160428286
-num_ing_pc_hat,Ingreso predicho por persona,778768.4173,1774172.836,-0.157783099
-num_desocupados_ug,Desocupados de la unidad de gasto,0.182159311,0.446178772,0.152841298
-edad_promedio_pet,Edad promedio de PET,41.31268682,14.85156446,-0.148409712
-na_bin_hay_rentas_pensiones,Información faltante: Hogar con rentas o pensiones,0.074254365,0.262185184,0.147739793
-num_cuartos,Cuartos de la vivienda,3.390379486,1.239473789,-0.144837784
-na_bin_hay_pension,Información faltante: Hogar con pension,0.081080262,0.272959163,0.142273641
-bin_empleo_informal_ipm,Empleo informal: aproximación de privación,0.585529825,0.49263183,0.141599378
-na_bin_hay_rentista,Información faltante: Algun rentista,0.083159554,0.276124075,0.134900314
-bin_jefe_subsidio_transporte,Jefe con subsidio de transporte,0.142586081,0.349651301,-0.131403857
-log_arriendo,Logaritmo del arriendo,11.97154687,3.189933762,-0.127537904
-horas_promedio_ocupados,Horas promedio de ocupados,39.01725014,19.75043579,-0.11861369
-num_ocupados_ug,Ocupados de la unidad de gasto,1.493616634,1.022160859,-0.11667598
-log_arriendo_cuarto,Logaritmo del arriendo por cuarto,10.90378834,2.904300159,-0.115530234
-num_pet_ug,PET de la unidad de gasto,2.701588264,1.39713216,0.113647441
-pct_desocupados,Porcentaje desocupados,5.405492086,14.57867418,0.110562766
-bin_hay_rentista,Algun rentista,0.081983511,0.27434043,-0.106602551
-bin_casa_propia_pagada,Casa propia pagada,0.377521823,0.484768523,-0.105857491
-num_cuenta_propia,"Numero de trabajadores por cuenta propia, posicion 4 sin mezclar posicion 6",0.693113482,0.816620971,0.101916133
-na_bin_hay_subsidios,Información faltante: Hogar con subsidios,0.050048497,0.218045713,0.100272842
-prop_dependientes_potenciales,Dependientes potenciales,0.236394059,0.281000939,0.098955603
-na_bin_hay_remesas,Información faltante: Hogar con remesas,0.066422163,0.249019347,0.096456387
-lp,Línea de pobreza monetaria por persona,271522.3146,33656.89216,-0.092456343
-num_mujeres_ocupadas,Numero de mujeres ocupadas,0.666773763,0.692205663,-0.092349479
-bin_sin_ocupados,Hogar sin ocupados,0.136772551,0.343608114,0.088146021
-pct_inactivos,Porcentaje inactivos,31.43949358,31.09434948,0.08609137
-bin_hay_subsidios,Hogar con subsidios,0.281134821,0.449554511,0.081208993
-clase,Ubicacion del hogar,1.093792435,0.291540613,0.080575899
-bin_hay_remesas,Hogar con remesas,0.237742483,0.425701883,0.07700427
-pct_sin_salud,Sin afiliacion a salud,6.696483853,20.90857699,0.06929059
-na_bin_hay_ayuda,Información faltante: Hogar con ayuda institucional,0.068792435,0.253101608,0.068786787
-bin_hay_bonificaciones,Alguien recibe bonificaciones,0.02278128,0.149205994,-0.068062291
-bin_arriendo_nsnr,Arriendo: monto no informado,0.06317289,0.243274403,0.061575423
-pct_mujeres_ocupadas,Porcentaje de mujeres ocupadas,37.37518582,38.48840582,-0.058238769
-bin_trabajo_infantil,Trabajo infantil aproximado,0.02114452,0.143866447,0.057361608
-bin_jefe_mujer,Jefatura femenina,0.418289282,0.493279671,0.050135126
-log_amortizacion,Logaritmo de la amortizacion,0.412689787,2.307876716,-0.050068866
-bin_paga_amortizacion,Paga amortizacion,0.034105238,0.181500055,-0.048186249
-bin_arriendo_imput,Arriendo estimado,0.609281038,0.487913002,-0.048155443
-bin_desea_mas_horas,Alguien desea trabajar mas horas,0.115009699,0.319034615,0.04800469
-prop_ing_jefe_hat,Participación del jefe en el ingreso predicho del hogar,0.661918015,0.334871451,0.040095903
-num_mayores65,Mayores de 65 anios,0.296199079,0.582212679,-0.035302061
-arriendo_pc_lp,Arriendo por persona respecto de la línea de pobreza,0.715873433,5.94129904,-0.034154308
-arriendo,Arriendo efectivo o estimado,475637.7843,3373340.663,-0.030285539
-num_segundo_trabajo,Numero de ocupados con segundo trabajo,0.074054316,0.285537189,-0.024860873
-pct_domesticos,"Porcentaje de empleados domesticos, posicion 3",2.247607886,12.44142989,0.023476215
-pct_segundo_trabajo,Porcentaje de ocupados con segundo trabajo,4.211013877,17.22791778,-0.017937243
-num_jornaleros,"Numero de jornaleros, posicion 8",0.01968356,0.159471289,-0.012637801
-num_domesticos,"Numero de empleados domesticos, posicion 3",0.040137003,0.20370737,0.010896374
-bin_jefe_segundo_trabajo,Jefe con segundo trabajo,0.041288797,0.198957967,-0.009938588
-na_bin_hay_bonificaciones,Información faltante: Alguien recibe bonificaciones,7.76E-04,0.027845077,-0.009045105
-pct_jornaleros,"Porcentaje de jornaleros, posicion 8",1.31310741,10.6078604,-0.007380546
-cuota_amortizacion,Cuota de amortizacion,31374.58748,1141653.21,-0.006979032
-num_cuartos_dormir,Cuartos para dormir,1.989361057,0.89815772,-0.005746095
-bin_cuota_nsnr,Amortización: monto no informado,0.00300679,0.054751867,-0.005062525
+pct_salud_no_contributiva,Salud no contributiva,48.9953501261604,44.76454548273495,0.3980657327066313
+personas_por_ocupado,Personas por ocupado,2.2134485444807646,1.2256630614198956,0.37942373302816657
+pct_personas_ingreso,Ocupados y pensionados (% de la unidad de gasto),56.27348770388717,33.49615217488905,-0.3716374352785821
+pct_salud_subsidiada,Salud subsidiada,42.29673372185064,44.11379111794044,0.37107925905350214
+num_menores18,Menores de edad,0.9176951988360815,1.1200621839494063,0.3640200822417251
+personas_por_cuarto,Personas por cuarto de la vivienda,1.0636471547538557,0.6821293590731377,0.3400607431608251
+num_ratio_lp_sin_arr_hat,"Ingreso predicho respecto de la línea de pobreza, sin arriendo imputado",2.435509979724628,2.5834124302695263,-0.33540771570225997
+num_ing_ug_hat,Ingreso predicho de la unidad de gasto,1810599.2190086334,1652034.7546293936,-0.3245930872140928
+num_privaciones,Número de privaciones aproximadas,1.2496968962172648,1.027525043449498,0.3181882707445795
+personas_por_dormitorio,Personas por dormitorio,1.7283181661162688,0.8302673703107019,0.3158209411580411
+num_ing_max_hat,Mayor ingreso individual predicho del hogar,1244824.7531266783,1084475.2666934268,-0.31251544070785825
+num_cotizantes,Numero de ocupados que cotizan pension,0.5739027643064986,0.7576862268355617,-0.295753268087586
+pct_ocupados,Personas ocupadas (% de la unidad de gasto),49.69008070194466,31.91171469680212,-0.2912706827580061
+num_menores10,Menores de 10 anios,0.4866452473326867,0.7835883037616714,0.2907999839074604
+pct_cotizantes,Cotizantes a pensión (% de ocupados),34.372085392514585,42.99169451152323,-0.28711613806054226
+pct_trabajadores_vulnerables,Porcentaje de trabajadores vulnerables segun regla aprobada,32.95174080418988,43.374107470750175,0.2867654825127348
+pct_informales,Porcentaje de informales segun proxy aprobada,39.06757432034772,46.045967304156804,0.2840315464380163
+pct_pet,Porcentaje PET,86.53506636352466,18.77715500036728,-0.26660765401666536
+prop_dependencia_pet,Dependencia respecto de PET,0.23804746988677214,0.4029439062364728,0.2619710814699763
+anios_educ_promedio_pet,Educacion promedio PET,9.524761777360606,3.9955208327342255,-0.25885740765293036
+num_asalariados,Numero de asalariados de posiciones 1 o 2,0.6342082929194957,0.7887245866759289,-0.25815573087163685
+pct_asalariados,Porcentaje de asalariados de posiciones 1 o 2,37.13318526735416,43.225832901352035,-0.2428382323067376
+num_perceptores_hat,Número de perceptores de ingreso predicho,1.6565894762366635,0.9230912270924607,-0.2404385355319904
+num_personas_ug,Personas de la unidad de gasto,3.279570805043647,1.772475690453464,0.2404369840475648
+pct_superior_pet,Porcentaje superior entre PET,30.522650749471474,37.291218609202204,-0.2394111198832322
+num_personas,Personas del hogar,3.2923678467507274,1.7747992417844067,0.23724889954188982
+bin_hay_ayuda,Hogar con ayuda institucional,0.1505758971871969,0.3576360884119442,0.23410158463617411
+bin_hacinamiento,Hacinamiento aproximado,0.09400460717749758,0.29183601097760536,0.23254359794516108
+carga_cuidado,Carga potencial de cuidado,0.7828443258971872,0.8949077646682685,0.23165980523648386
+num_menores6,Menores de seis anios,0.2825472841901067,0.56751963709857145,0.2280030775866619
+anios_educ_max,Educacion maxima del hogar,11.665070320077595,4.268087368497054,-0.2234300619113228
+anios_educ_jefe,Educacion del jefe,9.091949563530553,5.036813240961095,-0.22331575214327984
+bin_jefe_vulnerable,Jefe trabajador vulnerable,0.27362390882638216,0.4458195489356948,0.2185653026289419
+bin_bajo_logro_educ,Bajo logro educativo,0.3929801163918526,0.48841395415126804,0.21831314321291592
+bin_jefe_informal,Jefe informal,0.3233996120271581,0.4677751911256279,0.21637766899214173
+num_superior_pet,PET con educacion superior,0.7717446653734239,0.9668280750393216,-0.21503426309248053
+bin_hay_rentas_pensiones,Hogar con rentas o pensiones,0.21893186226964112,0.4135235647194299,-0.2081276560616478
+num_vulnerables,Numero de trabajadores vulnerables segun regla aprobada,0.5822381183317168,0.8616713824399498,0.2060439878033554
+bin_rezago_escolar,Rezago escolar aproximado,0.15603782735208535,0.36289230097516906,0.20514588965254554
+num_inactivos_ug,Inactivos de la unidad de gasto,1.0258123181377303,1.0279942778139688,0.204133015669231
+edad_promedio,Edad promedio del hogar,37.43954350784672,16.8762282064289,-0.20197094204193505
+bin_jefe_educacion_superior,Jefe con educacion superior,0.2723872453928225,0.44518943766103114,-0.19037371930200708
+num_informales,Numero de informales segun proxy aprobada,0.6864088263821533,0.9432452258753654,0.18865637869427812
+anios_educ_pareja,Educacion conjunta de jefe y pareja,14.119113724539282,8.81185982441319,-0.18347005870759162
+bin_hay_pension,Hogar con pension,0.13919131910766247,0.34614711054323993,-0.18236083079096047
+beneficios_promedio_ocupados,Beneficios laborales promedio,0.34040335656166765,0.637224545449154,-0.17832737681307895
+num_pensionistas_ug,Pensionados de la unidad de gasto,0.15636517943743938,0.4106877587320079,-0.17443930540604866
+pct_cuenta_propia,"Porcentaje de trabajadores por cuenta propia, posicion 4 sin mezclar posicion 6",40.43635557546506,43.49663503907225,0.17223379264666347
+num_ratio_lp_hat,Ingreso predicho por persona respecto de la línea de pobreza,2.836345130848666,6.274714887955874,-0.16042828614465582
+num_ing_pc_hat,Ingreso predicho por persona,778768.4172786587,1774172.836143176,-0.15778309900709447
+num_desocupados_ug,Desocupados de la unidad de gasto,0.18215931134820562,0.446178772084184,0.15284129800568866
+edad_promedio_pet,Edad promedio de PET,41.312686819483055,14.85156446098842,-0.1484097124741674
+na_bin_hay_rentas_pensiones,Información faltante: Hogar con rentas o pensiones,0.07425436469447139,0.2621851840433841,0.1477397930100095
+num_cuartos,Cuartos de la vivienda,3.3903794859359846,1.2394737894974655,-0.1448377841718747
+na_bin_hay_pension,Información faltante: Hogar con pension,0.08108026188166828,0.27295916302653955,0.14227364050363156
+bin_empleo_informal_ipm,Empleo informal: aproximación de privación,0.5855298254122211,0.4926318302206786,0.14159937761580124
+na_bin_hay_rentista,Información faltante: Algun rentista,0.08315955383123182,0.27612407471601913,0.1349003137408134
+bin_jefe_subsidio_transporte,Jefe con subsidio de transporte,0.1425860814742968,0.3496513005401482,-0.13140385669414575
+log_arriendo,Logaritmo del arriendo,11.971546870198893,3.1899337617295784,-0.1275379040642163
+horas_promedio_ocupados,Horas promedio de ocupados,39.01725014035498,19.75043579011535,-0.11861368983395149
+num_ocupados_ug,Ocupados de la unidad de gasto,1.4936166343355965,1.0221608591951992,-0.11667598041723125
+log_arriendo_cuarto,Logaritmo del arriendo por cuarto,10.903788337170193,2.9043001588159107,-0.11553023439392181
+num_pet_ug,PET de la unidad de gasto,2.7015882638215323,1.3971321600445126,0.1136474406923904
+pct_desocupados,Porcentaje desocupados,5.405492085778216,14.57867418191182,0.11056276573000084
+bin_hay_rentista,Algun rentista,0.0819835111542192,0.2743404295780199,-0.10660255094255683
+bin_casa_propia_pagada,Casa propia pagada,0.3775218234723569,0.48476852297297474,-0.10585749117096983
+num_cuenta_propia,"Numero de trabajadores por cuenta propia, posicion 4 sin mezclar posicion 6",0.6931134820562561,0.8166209705625198,0.10191613334195668
+na_bin_hay_subsidios,Información faltante: Hogar con subsidios,0.050048496605237636,0.21804571265610984,0.10027284183309951
+prop_dependientes_potenciales,Dependientes potenciales,0.23639405931455482,0.28100093935322595,0.09895560317598898
+na_bin_hay_remesas,Información faltante: Hogar con remesas,0.0664221629485936,0.24901934690096997,0.09645638717143543
+lp,Línea de pobreza monetaria por persona,271522.31455790927,33656.89215835872,-0.09245634256148648
+num_mujeres_ocupadas,Numero de mujeres ocupadas,0.6667737633365665,0.692205662610256,-0.09234947887224611
+bin_sin_ocupados,Hogar sin ocupados,0.1367725509214355,0.3436081139381782,0.08814602073169332
+pct_inactivos,Porcentaje inactivos,31.439493575801787,31.0943494807427,0.08609136998959228
+bin_hay_subsidios,Hogar con subsidios,0.2811348205625606,0.4495545110115252,0.08120899321553904
+clase,Ubicacion del hogar,1.0937924345295829,0.29154061296215433,0.08057589882319481
+bin_hay_remesas,Hogar con remesas,0.23774248302618817,0.42570188321496916,0.07700427027400786
+pct_sin_salud,Sin afiliacion a salud,6.696483852695518,20.90857698876828,0.06929058986841598
+na_bin_hay_ayuda,Información faltante: Hogar con ayuda institucional,0.06879243452958293,0.2531016076997765,0.06878678670361595
+bin_hay_bonificaciones,Alguien recibe bonificaciones,0.022781280310378273,0.14920599362734832,-0.06806229074225811
+bin_arriendo_nsnr,Arriendo: monto no informado,0.06317289039767217,0.24327440285585888,0.0615754234409831
+pct_mujeres_ocupadas,Porcentaje de mujeres ocupadas,37.375185820551366,38.4884058174179,-0.0582387687378086
+bin_trabajo_infantil,Trabajo infantil aproximado,0.021144519883608145,0.14386644720935413,0.05736160776137192
+bin_jefe_mujer,Jefatura femenina,0.4182892822502425,0.4932796708342743,0.050135126239209245
+log_amortizacion,Logaritmo de la amortizacion,0.4126897873759422,2.307876715596412,-0.05006886582617096
+bin_paga_amortizacion,Paga amortizacion,0.03410523763336566,0.1815000553660272,-0.04818624934181422
+bin_arriendo_imput,Arriendo estimado,0.6092810378273521,0.48791300239247426,-0.04815544319537789
+bin_desea_mas_horas,Alguien desea trabajar mas horas,0.11500969932104753,0.31903461473622835,0.048004690221570515
+prop_ing_jefe_hat,Participación del jefe en el ingreso predicho del hogar,0.6619180148723004,0.3348714508461175,0.04009590289677105
+num_mayores65,Mayores de 65 anios,0.2961990785645005,0.5822126793432287,-0.03530206123213497
+arriendo_pc_lp,Arriendo por persona respecto de la línea de pobreza,0.7158734325047088,5.941299039758635,-0.034154308432858375
+arriendo,Arriendo efectivo o estimado,475637.7843416586,3373340.662562265,-0.03028553949384313
+num_segundo_trabajo,Numero de ocupados con segundo trabajo,0.07405431619786615,0.2855371892593488,-0.02486087321490822
+pct_domesticos,"Porcentaje de empleados domesticos, posicion 3",2.247607885701969,12.4414298872964,0.023476215274761156
+pct_segundo_trabajo,Porcentaje de ocupados con segundo trabajo,4.211013877342078,17.22791778030043,-0.01793724334755994
+num_jornaleros,"Numero de jornaleros, posicion 8",0.019683559650824443,0.15947128850692935,-0.012637800582539773
+num_domesticos,"Numero de empleados domesticos, posicion 3",0.04013700290979631,0.20370736985713095,0.010896373857903752
+bin_jefe_segundo_trabajo,Jefe con segundo trabajo,0.041288797284190104,0.19895796658055595,-0.00993858793147442
+na_bin_hay_bonificaciones,Información faltante: Alguien recibe bonificaciones,7.759456838021338e-4,0.027845076626181665,-0.009045105245947888
+pct_jornaleros,"Porcentaje de jornaleros, posicion 8",1.3131074103582592,10.607860400357428,-0.007380546019076152
+cuota_amortizacion,Cuota de amortizacion,31374.587475751698,1141653.2101289008,-0.0069790317810095185
+num_cuartos_dormir,Cuartos para dormir,1.989361057225994,0.8981577199495393,-0.005746094817971692
+bin_cuota_nsnr,Amortización: monto no informado,0.003006789524733269,0.05475186676431268,-0.00506252522030431
