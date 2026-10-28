@@ -4,10 +4,12 @@
 # Descripcion:
 #   Explorar las dimensiones, el desbalance y las distribuciones de los datos.
 # Input:
-#   Bases originales y features de 02_creation_income_var.R.
+#   Bases originales, features de 02_creation_income_var.R y diccionario
+#   04_documentation/diccionario_variables.xlsx (hoja Variables hogares).
 #   Paquetes del setup y rutas definidas en main.R.
 # Output:
-#   Tablas y figuras descriptivas.
+#   Tres CSV en 03_outputs/descriptivas/tables/ y dos PDF vectoriales
+#   en 03_outputs/descriptivas/figures/, numerados segun el orden del analisis.
 # ------------------------------------------------------------------------------
 
 # Reutilizar las rutas definidas en main.R.
@@ -35,19 +37,19 @@ contar_dimensiones <- function(nombre, ruta) {
 
 dimensiones_bases <- bind_rows(
   contar_dimensiones(
-    "train_hogares",
+    "Hogares de entrenamiento",
     file.path(dir_raw_completo, "train_hogares.csv")
   ),
   contar_dimensiones(
-    "test_hogares",
+    "Hogares de prueba",
     file.path(dir_raw_completo, "test_hogares.csv")
   ),
   contar_dimensiones(
-    "train_personas",
+    "Personas de entrenamiento",
     file.path(dir_raw_completo, "train_personas.csv")
   ),
   contar_dimensiones(
-    "test_personas",
+    "Personas de prueba",
     file.path(dir_raw_completo, "test_personas.csv")
   )
 )
@@ -55,7 +57,7 @@ dimensiones_bases <- bind_rows(
 cat("Dimensiones de las cuatro bases:\n")
 print(dimensiones_bases)
 write_csv(dimensiones_bases,
-          file.path(dir_salida, "tables", "dimensiones_bases.csv"))
+          file.path(dir_salida, "tables", "01_dimensiones_bases.csv"))
 
 
 # ------------------------------------------------------------------------------
@@ -77,7 +79,7 @@ desbalance <- train_hogares |>
 cat("\nDesbalance de clases:\n")
 print(desbalance)
 write_csv(desbalance,
-          file.path(dir_salida, "tables", "desbalance_clases.csv"))
+          file.path(dir_salida, "tables", "02_desbalance_clases.csv"))
 
 
 # ------------------------------------------------------------------------------
@@ -92,8 +94,8 @@ if (!file.exists(archivo_db_train) ||
     "Faltan ",
     dir_repo_features,
     "/db_train.rds y db_test.rds. ",
-    "Se generan corriendo 02_code/01_cleaning.R y 02_code/02_ingreso.R ",
-    "(o main.R completo) una vez en el repo clonado de GitHub."
+    "Se generan corriendo 02_code/01_cleaning.R y 02_code/02_creation_income_var.R ",
+    "en el orden definido por main.R."
   )
 }
 db_train <- readRDS(archivo_db_train)
@@ -110,22 +112,22 @@ cat("\nNA en num_ing_pc_hat -> train:",
 
 ingreso_pc <- bind_rows(
   tibble(
-    muestra = "Train - observado",
+    muestra = "Entrenamiento: observado",
     log_ingreso_pc = log1p(train_hogares$Ingpcug)
   ),
-  tibble(muestra = "Train - predicho (XGBoost)", log_ingreso_pc = log1p(pmax(
+  tibble(muestra = "Entrenamiento: predicho", log_ingreso_pc = log1p(pmax(
     db_train$num_ing_pc_hat, 0
   ))),
-  tibble(muestra = "Test - predicho (XGBoost)", log_ingreso_pc = log1p(pmax(
+  tibble(muestra = "Prueba: predicho", log_ingreso_pc = log1p(pmax(
     db_test$num_ing_pc_hat, 0
   )))
 ) |>
   mutate(muestra = factor(
     muestra,
     levels = c(
-      "Train - observado",
-      "Train - predicho (XGBoost)",
-      "Test - predicho (XGBoost)"
+      "Entrenamiento: observado",
+      "Entrenamiento: predicho",
+      "Prueba: predicho"
     )
   ))
 
@@ -144,27 +146,30 @@ fig_ingreso <- ggplot(ingreso_pc,
     "text",
     x = log1p(lp_mediana),
     y = Inf,
-    label = "Lp mediana",
+    label = "Línea de pobreza mediana",
     vjust = 1.5,
     hjust = -0.1,
     size = 3
   ) +
   labs(
-    title = "Distribución del ingreso per cápita del hogar: observado vs. predicho",
-    subtitle = "Escala log(1 + ingreso). El ingreso predicho sale del modelo de ingreso potencial (XGBoost, 02_ingreso.R)",
-    x = "log(1 + ingreso per cápita)",
+    title = "Ingreso por persona: observado y predicho",
+    subtitle = "Distribuciones sin ponderar; ingreso mensual por persona en pesos.",
+    x = "Logaritmo de uno más el ingreso mensual por persona",
     y = "Densidad",
     fill = NULL,
     color = NULL
   ) +
   theme_minimal(base_size = 12) +
-  theme(legend.position = "bottom")
+  theme(legend.position = "bottom", plot.title = element_text(face = "bold")) +
+  guides(fill = guide_legend(nrow = 2, byrow = TRUE),
+         color = guide_legend(nrow = 2, byrow = TRUE))
 
 ggsave(
-  file.path(dir_salida, "figures", "distribucion_ingreso_pc.pdf"),
+  file.path(dir_salida, "figures", "01_distribucion_ingreso_por_persona.pdf"),
   fig_ingreso,
-  width = 8,
-  height = 5.5
+  device = cairo_pdf,
+  width = 10,
+  height = 6.5
 )
 
 
@@ -181,44 +186,92 @@ pobre_num <- as.numeric(db_train$Pobre == "Si")
 
 vars_numericas <- db_train |>
   select(where(is.numeric)) |>
-  select(-any_of("Pobre")) |>
+  select(-any_of(c("id", "Pobre"))) |>
   names()
+
+# Nombres para lectura; conservar el codigo original en una columna separada.
+etiquetas <- read_excel(file.path(dir_documentacion, "diccionario_variables.xlsx"),
+                        sheet = "Variables hogares") |>
+  transmute(variable = Variable, nombre = Nombre) |>
+  distinct(variable, .keep_all = TRUE)
+etiquetas_extra <- tribble(
+  ~variable, ~nombre,
+  "lp", "Línea de pobreza monetaria por persona",
+  "bin_arriendo_nsnr", "Arriendo: monto no informado",
+  "bin_cuota_nsnr", "Amortización: monto no informado",
+  "bin_hay_rentas_pensiones", "Hogar con rentas o pensiones",
+  "bin_empleo_informal_ipm", "Empleo informal: aproximación de privación",
+  "personas_por_dormitorio", "Personas por dormitorio",
+  "personas_por_cuarto", "Personas por cuarto de la vivienda",
+  "pct_personas_ingreso", "Ocupados y pensionados (% de la unidad de gasto)",
+  "pct_ocupados", "Personas ocupadas (% de la unidad de gasto)",
+  "pct_cotizantes", "Cotizantes a pensión (% de ocupados)",
+  "num_privaciones", "Número de privaciones aproximadas",
+  "arriendo_pc_lp", "Arriendo por persona respecto de la línea de pobreza",
+  "log_arriendo_cuarto", "Logaritmo del arriendo por cuarto",
+  "num_ing_ug_hat", "Ingreso predicho de la unidad de gasto",
+  "num_ing_pc_hat", "Ingreso predicho por persona",
+  "num_ratio_lp_hat", "Ingreso predicho por persona respecto de la línea de pobreza",
+  "num_ratio_lp_sin_arr_hat", "Ingreso predicho respecto de la línea de pobreza, sin arriendo imputado",
+  "num_ing_max_hat", "Mayor ingreso individual predicho del hogar",
+  "num_perceptores_hat", "Número de perceptores de ingreso predicho",
+  "prop_ing_jefe_hat", "Participación del jefe en el ingreso predicho del hogar"
+)
+etiquetas <- bind_rows(etiquetas_extra, etiquetas) |>
+  distinct(variable, .keep_all = TRUE)
+# Las indicadoras na_* describen desconocimiento, no ausencia del beneficio.
+etiquetas_faltantes <- tibble(variable = vars_numericas[str_starts(vars_numericas, "na_")]) |>
+  mutate(base = str_remove(variable, "^na_")) |>
+  left_join(etiquetas, by = c("base" = "variable")) |>
+  transmute(variable, nombre = paste("Información faltante:", nombre))
+etiquetas <- bind_rows(etiquetas_faltantes, etiquetas)
 
 descriptivas_vars <- map_dfr(vars_numericas, function(v) {
   x <- db_train[[v]]
+  x[!is.finite(x)] <- NA_real_
+  completos <- complete.cases(x, pobre_num)
+  correlacion <- if (sum(completos) > 1 && sd(x[completos]) > 0 &&
+                    sd(pobre_num[completos]) > 0) cor(x[completos], pobre_num[completos]) else NA_real_
   tibble(
     variable = v,
     media = mean(x, na.rm = TRUE),
     sd = sd(x, na.rm = TRUE),
-    correlacion_pobre = suppressWarnings(cor(x, pobre_num, use = "complete.obs"))
+    correlacion_pobre = correlacion
   )
 }) |>
+  left_join(etiquetas, by = "variable") |>
+  mutate(nombre = coalesce(nombre, str_to_sentence(str_replace_all(variable, "_", " ")))) |>
+  select(variable, nombre, everything()) |>
   arrange(desc(abs(correlacion_pobre)))
 
 write_csv(descriptivas_vars,
-          file.path(dir_salida, "tables", "descriptivas_variables.csv"))
+          file.path(dir_salida, "tables", "03_descriptivas_variables.csv"))
 
 cat("\nTop 10 variables mas correlacionadas con Pobre:\n")
 print(head(descriptivas_vars, 10))
 
-top_vars <- descriptivas_vars |> slice_head(n = 15)
+top_vars <- descriptivas_vars |>
+  filter(is.finite(correlacion_pobre)) |>
+  slice_head(n = 15) |>
+  mutate(etiqueta = str_wrap(nombre, width = 48))
 
-fig_top_vars <- ggplot(top_vars, aes(x = reorder(variable, abs(correlacion_pobre)), y = correlacion_pobre)) +
+fig_top_vars <- ggplot(top_vars, aes(x = reorder(etiqueta, abs(correlacion_pobre)), y = correlacion_pobre)) +
   geom_col(fill = "#2c3e50") +
   coord_flip() +
   labs(
-    title = "Variables mas asociadas con Pobre (correlación simple)",
-    subtitle = "Top 15 por valor absoluto de correlación, base de entrenamiento",
+    title = "Variables más asociadas con la pobreza",
+    subtitle = "Quince mayores correlaciones absolutas en entrenamiento; asociación sin controles.",
     x = NULL,
-    y = "Correlación con Pobre"
+    y = "Correlación con la condición de pobreza"
   ) +
   theme_minimal(base_size = 12)
 
 ggsave(
-  file.path(dir_salida, "figures", "top_variables_pobre.pdf"),
+  file.path(dir_salida, "figures", "02_variables_asociadas_pobreza.pdf"),
   fig_top_vars,
-  width = 7,
-  height = 6
+  device = cairo_pdf,
+  width = 12,
+  height = 9
 )
 
 cat("\nListo. Tablas y figura guardadas en",
