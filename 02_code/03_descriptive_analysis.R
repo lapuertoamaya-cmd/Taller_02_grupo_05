@@ -8,7 +8,7 @@
 #   04_documentation/diccionario_variables.xlsx (hoja Variables hogares).
 #   Paquetes del setup y rutas definidas en main.R.
 # Output:
-#   Tres CSV en 03_outputs/descriptivas/tables/ y tres PDF vectoriales
+#   Cuatro CSV en 03_outputs/descriptivas/tables/ y tres PDF vectoriales
 #   en 03_outputs/descriptivas/figures/, numerados segun el orden del analisis.
 # ------------------------------------------------------------------------------
 
@@ -305,6 +305,39 @@ fig_top_absolutas <- ggplot(top_vars_absolutas,
 
 ggsave(file.path(dir_salida, "figures", "03_asociacion_absoluta_pobreza.pdf"),
        fig_top_absolutas, device = cairo_pdf, width = 12, height = 9)
+
+# ------------------------------------------------------------------------------
+# (6) Comparar medias de entrenamiento y prueba: t de Welch, bilateral
+# ------------------------------------------------------------------------------
+
+# Mismas variables numericas, incluidas binarias (su media es una proporcion).
+# No ponderar; excluir identificadores y la respuesta, que no existe en test.
+variables_comunes <- intersect(vars_numericas,
+  names(db_test)[vapply(db_test, is.numeric, logical(1))])
+variables_comunes <- setdiff(variables_comunes, c("id", "Pobre", "pobre"))
+
+comparacion_train_test <- map_dfr(variables_comunes, function(v) {
+  x <- db_train[[v]]; x <- x[is.finite(x)]
+  y <- db_test[[v]]; y <- y[is.finite(y)]
+  # Welch no supone varianzas iguales. Sin variacion o sin observaciones
+  # suficientes, el contraste no es estimable: conservar NA, no imputar p=1.
+  prueba <- if (length(x) >= 2 && length(y) >= 2 && (var(x) > 0 || var(y) > 0))
+    tryCatch(t.test(x, y, var.equal = FALSE, alternative = "two.sided"),
+             error = function(e) NULL) else NULL
+  tibble(variable = v, n_train = length(x), n_test = length(y),
+    media_train = if (length(x)) mean(x) else NA_real_,
+    media_test = if (length(y)) mean(y) else NA_real_,
+    diferencia_train_test = media_train - media_test,
+    p_value = if (is.null(prueba)) NA_real_ else prueba$p.value,
+    nota = if (is.null(prueba)) "Contraste no estimable: datos insuficientes o sin variacion" else "")
+}) |>
+  left_join(etiquetas, by = "variable") |>
+  mutate(nombre = coalesce(nombre, str_to_sentence(str_replace_all(variable, "_", " ")))) |>
+  select(variable, nombre, n_train, n_test, media_train, media_test,
+         diferencia_train_test, p_value, nota)
+
+write_csv(comparacion_train_test,
+          file.path(dir_salida, "tables", "04_comparacion_train_test.csv"))
 
 cat("\nListo. Tablas y figura guardadas en",
     normalizePath(dir_salida),
