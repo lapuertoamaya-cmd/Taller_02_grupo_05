@@ -1,15 +1,24 @@
 # ------------------------------------------------------------------------------
-# Archivo: 01_exploratoria.R  (Etapa 1: entender los datos)
+# Archivo: 03_descriptive_analysis.R
 # Proyecto: Taller 2 - Big Data y Machine Learning
+# Descripcion:
+#   Explorar las dimensiones, el desbalance y las distribuciones de los datos.
+# Input:
+#   Bases originales y features de 02_creation_income_var.R.
+#   Paquetes del setup y rutas definidas en main.R.
+# Output:
+#   Tablas y figuras descriptivas.
 # ------------------------------------------------------------------------------
 
-if (!require("pacman"))
-  install.packages("pacman")
-pacman::p_load(tidyverse)
+# Reutilizar las rutas definidas en main.R.
+dir_raw_completo  <- dir_datos_raw
+dir_repo_features <- dir_features
+dir_salida        <- file.path(dir_resultados, "descriptivas")
 
-# Rutas del proyecto
-dir_raw_completo  <- "01_data/01_raw"
-dir_repo_features <- "01_data/03_features"
+for (carpeta in c("tables", "figures")) {
+  dir.create(file.path(dir_salida, carpeta),
+             recursive = TRUE, showWarnings = FALSE)
+}
 
 # ------------------------------------------------------------------------------
 # (1) Cantidad de variables y filas de cada base cruda
