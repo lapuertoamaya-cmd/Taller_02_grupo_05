@@ -175,7 +175,7 @@ bases o particiones no constituyen una comparación controlada entre bases.
 ## Software
 
 - La version de R y de los paquetes utilizada en cada ajuste queda registrada en sus resultados.
-- La semilla del flujo es 2026; fijar la semilla no bloquea las versiones de los paquetes.
+- La semilla del flujo es 2026.
 
 ## Reglas del repositorio
 
